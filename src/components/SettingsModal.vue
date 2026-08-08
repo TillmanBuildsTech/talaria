@@ -15,6 +15,22 @@
       </div>
 
       <div class="px-5 py-4 space-y-5">
+        <!-- API Key (optional for local gateway) -->
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1.5">API Key</label>
+          <input
+            v-model="keyInput"
+            type="password"
+            @keydown.enter="saveAll"
+            class="w-full bg-slate-800 text-sm rounded-lg px-3 py-2.5 border-none outline-none
+                   focus:ring-2 focus:ring-blue-500/50 text-slate-100 placeholder-slate-600"
+            placeholder="Required for gateway authentication"
+          />
+          <p class="text-xs text-slate-600 mt-1">
+            Hermes Gateway API Server key
+          </p>
+        </div>
+
         <!-- Connection URL -->
         <div>
           <label class="block text-xs font-medium text-slate-400 mb-1.5">Hermes API URL</label>
@@ -31,7 +47,7 @@
         </div>
 
         <button
-          @click="saveUrl"
+          @click="saveAll"
           class="w-full py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-sm font-medium transition-colors"
         >
           Save &amp; Reconnect
@@ -77,6 +93,7 @@ const store = useChatStore()
 const emit = defineEmits(['close'])
 
 const urlInput = ref(store.baseUrl)
+const keyInput = ref(store.apiKey)
 
 const presets = [
   { label: 'Local (Vite proxy)', url: '/api/v1', short: '/api/v1' },
@@ -85,8 +102,9 @@ const presets = [
   { label: 'Tailscale', url: 'http://100.x.x.x:8642/api/v1', short: 'TS' },
 ]
 
-function saveUrl() {
+function saveAll() {
   store.setBaseUrl(urlInput.value)
+  store.setApiKey(keyInput.value)
   emit('close')
 }
 

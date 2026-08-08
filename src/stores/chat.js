@@ -11,6 +11,7 @@ export const useChatStore = defineStore('chat', () => {
   const isStreaming = ref(false)
   const connectionStatus = ref('connected') // 'connected' | 'reconnecting' | 'offline'
   const baseUrl = ref('/api/v1')
+  const apiKey = ref(typeof __HERMES_API_KEY__ !== 'undefined' ? __HERMES_API_KEY__ : '')
   const error = ref(null)
 
   let connectionMonitor = null
@@ -217,7 +218,14 @@ export const useChatStore = defineStore('chat', () => {
   async function setBaseUrl(url) {
     baseUrl.value = url
     hermesClient.setBaseUrl(url)
-    await db.settings.put({ value: url }, 'baseUrl')
+    await db.settings.put({ key: 'baseUrl', value: url })
+  }
+
+  // Set API key
+  async function setApiKey(key) {
+    apiKey.value = key
+    hermesClient.setApiKey(key)
+    await db.settings.put({ key: 'apiKey', value: key })
   }
 
   // Init: load state from DB
@@ -227,6 +235,15 @@ export const useChatStore = defineStore('chat', () => {
     if (savedUrl?.value) {
       baseUrl.value = savedUrl.value
       hermesClient.setBaseUrl(savedUrl.value)
+    }
+
+    // Load saved API key, fall back to build-injected default
+    const savedKey = await db.settings.get('apiKey')
+    if (savedKey?.value) {
+      apiKey.value = savedKey.value
+      hermesClient.setApiKey(savedKey.value)
+    } else if (apiKey.value) {
+      hermesClient.setApiKey(apiKey.value)
     }
 
     await loadConversations()
@@ -262,6 +279,7 @@ export const useChatStore = defineStore('chat', () => {
     isStreaming,
     connectionStatus,
     baseUrl,
+    apiKey,
     error,
     // computed
     isOnline,
@@ -277,6 +295,7 @@ export const useChatStore = defineStore('chat', () => {
     sendMessage,
     retryMessage,
     stopStreaming,
-    setBaseUrl
+    setBaseUrl,
+    setApiKey
   }
 })

@@ -4,6 +4,9 @@ import { VitePWA } from 'vite-plugin-pwa'
 import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
+  define: {
+    __HERMES_API_KEY__: JSON.stringify(process.env.HERMES_API_KEY || '')
+  },
   plugins: [
     vue(),
     tailwindcss(),
@@ -38,7 +41,19 @@ export default defineConfig({
     proxy: {
       '/api': {
         target: 'http://localhost:8642',
-        changeOrigin: true
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, ''),
+        configure: (proxy) => {
+          proxy.on('proxyReq', (proxyReq, req) => {
+            // Forward Authorization header to the gateway
+            if (req.headers['authorization']) {
+              proxyReq.setHeader('authorization', req.headers['authorization'])
+            }
+            // Strip Origin/Referer to avoid gateway CORS rejection
+            proxyReq.removeHeader('origin')
+            proxyReq.removeHeader('referer')
+          })
+        }
       }
     }
   }

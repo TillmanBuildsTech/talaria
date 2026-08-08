@@ -14,11 +14,16 @@ const DEFAULT_BASE = '/api/v1'
 class HermesClient {
   constructor(baseUrl = DEFAULT_BASE) {
     this.baseUrl = baseUrl
+    this.apiKey = null
     this.abortController = null
   }
 
   setBaseUrl(url) {
     this.baseUrl = url
+  }
+
+  setApiKey(key) {
+    this.apiKey = key
   }
 
   // ---------------------------------------------------------------------------
@@ -50,9 +55,13 @@ class HermesClient {
     }
 
     try {
+      const headers = { 'Content-Type': 'application/json' }
+      if (this.apiKey) {
+        headers['Authorization'] = `Bearer ${this.apiKey}`
+      }
       const response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(payload),
         signal: this.abortController.signal
       })
