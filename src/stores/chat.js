@@ -250,7 +250,12 @@ export const useChatStore = defineStore('chat', () => {
   async function loadConversations() {
     const list = await db.conversations.orderBy('updatedAt').reverse().toArray()
     for (const c of list) {
-      c.messageCount = await db.messages.where('conversationId').equals(c.id).count()
+      const n = await db.messages.where('conversationId').equals(c.id).count()
+      // Server-discovered conversations carry a server message_count but no
+      // local rows yet (messages load from the gateway when opened) — don't
+      // clobber their known count down to 0, which would hide them from the
+      // sidebar. Local rows win once they exist (e.g. after opening a chat).
+      c.messageCount = n > 0 ? n : (c.messageCount || 0)
     }
     conversations.value = list
     if (!activeConversationId.value) {
