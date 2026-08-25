@@ -365,36 +365,43 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   // Rebuild Talaria conversations from the gateway's persisted sessions so a
-  // fresh device's sidebar matches what was chatted on other devices. Scans the
-  // default-profile sessions (global key); per-agent sessions need that agent's
-  // key configured on this device.
+  // fresh device's sidebar matches what was chatted elsewhere (works because
+  // history is NOT per-browser — it's in the gateway's session store). Scans
+  // BOTH the default profile AND every configured agent profile: DMs/groups
+  // are stored under each profile's own session store, so they'd otherwise
+  // never surface in a fresh browser (no local IndexedDB to seed from).
   async function discoverServerConversations() {
-    let sessions = []
-    try {
-      sessions = await hermesClient.listSessions(null, { apiKey: apiKey.value })
-    } catch {
-      sessions = []
-    }
+    const profiles = [null, ...agents.value.map(a => a.name)]
+    const seen = new Set()
     let changed = false
-    for (const s of sessions) {
-      const parsed = parseTalariaSession(s.id)
-      if (!parsed) continue
-      const agent = parsed.agent
-      const key = agentKeyName(agent)
-      const exists = await db.conversations
-        .filter(c => c.sessions && c.sessions[key] === s.id)
-        .toArray()
-      if (exists.length) continue
-      await db.conversations.add({
-        title: s.title || (agent ? agentDisplay(agent) : 'New Chat'),
-        lastMessage: s.preview || '',
-        updatedAt: typeof s.last_active === 'number' ? s.last_active : Date.now(),
-        kind: agent ? 'dm' : 'default',
-        agentIds: agent ? [agent] : [],
-        messageCount: s.message_count || (s.preview ? 1 : 0),
-        sessions: { [key]: s.id }
-      })
-      changed = true
+    for (const profile of profiles) {
+      let list = []
+      try {
+        list = await hermesClient.listSessions(profile, { apiKey: agentKey(profile) })
+      } catch { list = [] }
+      for (const s of list || []) {
+        const parsed = parseTalariaSession(s.id)
+        if (!parsed) continue
+        const agent = parsed.agent
+        const key = agentKeyName(agent)
+        const uniq = key + '|' + s.id
+        if (seen.has(uniq)) continue
+        seen.add(uniq)
+        const exists = await db.conversations
+          .filter(c => c.sessions && c.sessions[key] === s.id)
+          .toArray()
+        if (exists.length) continue
+        await db.conversations.add({
+          title: s.title || (agent ? agentDisplay(agent) : 'New Chat'),
+          lastMessage: s.preview || '',
+          updatedAt: typeof s.last_active === 'number' ? s.last_active : Date.now(),
+          kind: agent ? 'dm' : 'default',
+          agentIds: agent ? [agent] : [],
+          messageCount: s.message_count || (s.preview ? 1 : 0),
+          sessions: { [key]: s.id }
+        })
+        changed = true
+      }
     }
     if (changed) await loadConversations()
   }
