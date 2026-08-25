@@ -136,7 +136,7 @@
 
       <!-- Footer -->
       <div class="px-4 py-3 border-t border-slate-800 text-xs text-slate-600">
-        Hermes Chat — tap an agent to message it directly
+        Talaria — tap an agent to message it directly
       </div>
     </div>
   </div>

@@ -1,8 +1,8 @@
-# Hermes Chat PWA — Design & Architecture
+# Talaria — Design & Architecture
 
 ## Overview
 
-Hermes Chat is a zero-friction PWA chat client for [Hermes Agent](https://github.com/NousResearch/hermes-agent). It connects to a remote Hermes Gateway's API Server over Cloudflare Tunnels, Tailscale, SSH tunnels, or direct LAN, providing an installable native-feeling mobile chat experience.
+Talaria is a zero-friction PWA chat client for [Hermes Agent](https://github.com/NousResearch/hermes-agent). It connects to a remote Hermes Gateway's API Server over Cloudflare Tunnels, Tailscale, SSH tunnels, or direct LAN, providing an installable native-feeling mobile chat experience.
 
 **Core thesis:** Existing Hermes clients require desktop installs or Docker. A PWA gives instant mobile access — tap "Add to Home Screen" and you're chatting with your agent. No app store, no sideload, no native build.
 
@@ -383,7 +383,7 @@ The app is always dark (`slate-900` background, `slate-800` surfaces, `slate-100
 ## File Map
 
 ```
-hermes-pwa/
+talaria/
 ├── index.html                    ← Entry point, meta tags, PWA apple-mobile-web-app
 ├── vite.config.js                ← Vue + Tailwind + PWA plugins, dev proxy
 ├── package.json                  ← Dependencies (7 total, no framework bloat)

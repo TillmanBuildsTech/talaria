@@ -85,7 +85,7 @@ export const useChatStore = defineStore('chat', () => {
 
   // Title for a conversation: DM → agent display name, group → joined names.
   function convTitle(conv) {
-    if (!conv) return 'Hermes Chat'
+    if (!conv) return 'Talaria'
     if (conv.kind === 'group') {
       const names = (conv.agentIds || []).map(agentDisplay).filter(Boolean)
       return names.length ? names.join(', ') : conv.title

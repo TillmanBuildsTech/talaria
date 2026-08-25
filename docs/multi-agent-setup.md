@@ -1,6 +1,6 @@
 # Hermes Chat — Multi-Agent Setup Guide
 
-Hermes Chat can talk to **every Hermes profile you run** as a separate **Agent**
+Talaria can talk to **every Hermes profile you run** as a separate **Agent**
 (contact): message any profile directly, or add several to a group chat and
 `@`-mention them. This is built on the Hermes gateway's native *profile
 multiplexing* — one gateway on one port serves every profile, addressed by a
@@ -82,9 +82,9 @@ with *its own* `API_SERVER_KEY` (from that profile's `.env`). The default
 profile's key does **not** work for other profiles.
 
 1. **Default / legacy chat** → uses the default profile's key (the global key
-   you put in Hermes Chat **Settings → API Key**).
-2. **Each additional profile** needs its key stored on that agent. In Hermes
-   Chat: **Settings → Agents → Edit** an agent → paste that profile's
+   you put in Talaria **Settings → API Key**).
+2. **Each additional profile** needs its key stored on that agent. In Talaria
+   **Settings → Agents → Edit** an agent → paste that profile's
    `API_SERVER_KEY` (e.g. from `~/.hermes/profiles/researcher/.env`).
    An agent with a blank key falls back to the global/default key.
 

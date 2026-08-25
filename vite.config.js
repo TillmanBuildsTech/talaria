@@ -14,9 +14,9 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png'],
       manifest: {
-        name: 'Hermes Chat',
-        short_name: 'Hermes',
-        description: 'PWA mobile client for Hermes Agent — chat with your AI anywhere',
+        name: 'Talaria',
+        short_name: 'Talaria',
+        description: 'Talk to every Hermes profile as a contact — DM, group, and @mention your agents',
         theme_color: '#0f172a',
         background_color: '#0f172a',
         display: 'standalone',
