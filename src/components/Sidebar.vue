@@ -135,7 +135,6 @@
               <span
                 v-else
                 class="text-sm font-medium truncate text-slate-200 flex-1"
-                @click.stop
               >{{ title(conv) }}</span>
               <button
                 v-if="editingId !== conv.id"
