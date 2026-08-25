@@ -69,6 +69,71 @@
           </button>
         </div>
 
+        <!-- Agents (profile contacts) -->
+        <div class="pt-1">
+          <div class="flex items-center justify-between mb-1.5">
+            <p class="text-xs font-medium text-slate-500">Agents (Hermes profiles)</p>
+            <button
+              @click="beginAdd"
+              class="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+            >{{ editingAgent || addingAgent ? 'Cancel' : '+ Add' }}</button>
+          </div>
+
+          <!-- Add / edit agent form -->
+          <div v-if="addingAgent" class="space-y-2 mb-2 bg-slate-800/50 rounded-lg p-3">
+            <input
+              v-model="formName"
+              :disabled="!!editingAgent"
+              placeholder="Profile name (e.g. developer)"
+              class="w-full bg-slate-800 text-sm rounded-lg px-3 py-2 border-none outline-none
+                     focus:ring-2 focus:ring-blue-500/50 text-slate-100 placeholder-slate-600 disabled:opacity-50"
+            />
+            <input
+              v-model="formDisplay"
+              placeholder="Display name (optional)"
+              class="w-full bg-slate-800 text-sm rounded-lg px-3 py-2 border-none outline-none
+                     focus:ring-2 focus:ring-blue-500/50 text-slate-100 placeholder-slate-600"
+            />
+            <input
+              v-model="formApiKey"
+              type="password"
+              placeholder="API key (auto-filled from global if empty)"
+              class="w-full bg-slate-800 text-sm rounded-lg px-3 py-2 border-none outline-none
+                     focus:ring-2 focus:ring-blue-500/50 text-slate-100 placeholder-slate-600"
+            />
+            <button
+              @click="saveAgent"
+              :disabled="!formName.trim()"
+              class="w-full py-2 rounded-lg text-sm font-medium transition-colors"
+              :class="formName.trim()
+                ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                : 'bg-slate-800 text-slate-500 cursor-not-allowed'"
+            >{{ editingAgent ? 'Save agent' : 'Add agent' }}</button>
+            <p class="text-[11px] text-slate-600">
+              Each Hermes profile has its own API key. Requires
+              <code class="text-slate-500">gateway.multiplex_profiles</code> on the gateway.
+            </p>
+          </div>
+
+          <ul class="divide-y divide-slate-800/60">
+            <li v-for="agent in store.agents" :key="agent.name" class="flex items-center gap-3 py-2">
+              <AgentAvatar :name="agent.name" :display="agent.displayName" :color="agent.color" :size="9" />
+              <span class="flex-1 min-w-0">
+                <span class="block text-sm text-slate-200 truncate">{{ agent.displayName }}</span>
+                <span class="block text-xs text-slate-500 font-mono truncate">{{ agent.name }}</span>
+              </span>
+              <button
+                @click="beginEdit(agent)"
+                class="text-xs text-slate-400 hover:text-slate-200 transition-colors shrink-0"
+              >Edit</button>
+              <button
+                @click="store.removeAgent(agent.name)"
+                class="text-xs text-red-400 hover:text-red-300 transition-colors shrink-0"
+              >Remove</button>
+            </li>
+          </ul>
+        </div>
+
         <!-- Danger zone -->
         <div class="pt-3 border-t border-slate-800">
           <button
@@ -88,12 +153,18 @@
 import { ref } from 'vue'
 import { useChatStore } from '../stores/chat.js'
 import db from '../db.js'
+import AgentAvatar from './AgentAvatar.vue'
 
 const store = useChatStore()
 const emit = defineEmits(['close'])
 
 const urlInput = ref(store.baseUrl)
 const keyInput = ref(store.apiKey)
+const addingAgent = ref(false)
+const editingAgent = ref(null)
+const formName = ref('')
+const formDisplay = ref('')
+const formApiKey = ref('')
 
 const presets = [
   { label: 'Local (Vite proxy)', url: '/api/v1', short: '/api/v1' },
@@ -106,6 +177,37 @@ function saveAll() {
   store.setBaseUrl(urlInput.value)
   store.setApiKey(keyInput.value)
   emit('close')
+}
+
+function beginAdd() {
+  editingAgent.value = null
+  formName.value = ''
+  formDisplay.value = ''
+  formApiKey.value = ''
+  addingAgent.value = !addingAgent.value
+}
+
+function beginEdit(agent) {
+  editingAgent.value = agent
+  formName.value = agent.name
+  formDisplay.value = agent.displayName || ''
+  formApiKey.value = agent.apiKey || ''
+  addingAgent.value = true
+}
+
+async function saveAgent() {
+  const name = formName.value.trim()
+  if (!name) return
+  await store.addAgent({
+    name,
+    displayName: formDisplay.value.trim(),
+    apiKey: formApiKey.value.trim()
+  })
+  editingAgent.value = null
+  formName.value = ''
+  formDisplay.value = ''
+  formApiKey.value = ''
+  addingAgent.value = false
 }
 
 async function clearAll() {

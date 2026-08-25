@@ -1,5 +1,29 @@
 <template>
   <div class="px-3 py-3 border-t border-slate-800 shrink-0 bg-slate-900">
+    <!-- Group mention helper -->
+    <div
+      v-if="store.activeGroupMembers.length > 1"
+      class="flex items-center gap-1.5 mb-2 overflow-x-auto pb-0.5"
+    >
+      <span class="text-[11px] uppercase tracking-wider text-slate-500 shrink-0">@</span>
+      <button
+        v-for="name in store.activeGroupMembers"
+        :key="name"
+        @click="insertMention(name)"
+        class="flex items-center gap-1 px-2 py-1 rounded-full text-xs transition-colors shrink-0 border border-slate-700"
+        :style="{ backgroundColor: store.agentColor(name) + '1a', color: store.agentColor(name) }"
+        :title="`Mention ${store.agentDisplay(name)}`"
+      >
+        <span class="w-1.5 h-1.5 rounded-full" :style="{ backgroundColor: store.agentColor(name) }" />
+        {{ store.agentDisplay(name) }}
+      </button>
+      <button
+        @click="insertMention(null)"
+        class="px-2 py-1 rounded-full text-xs transition-colors shrink-0 border border-slate-700 text-slate-300 hover:bg-slate-800"
+        title="Mention all agents"
+      >@all</button>
+    </div>
+
     <div class="flex items-end gap-2">
       <!-- Text area (auto-grows) -->
       <div class="flex-1 relative">
@@ -13,7 +37,7 @@
                  border-none outline-none focus:ring-2 focus:ring-blue-500/50
                  placeholder-slate-500 text-slate-100 max-h-32"
           :disabled="store.isStreaming"
-          placeholder="Message Hermes..."
+          :placeholder="placeholder"
         />
         <!-- Clear button -->
         <button
@@ -63,7 +87,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useChatStore } from '../stores/chat.js'
 
 const store = useChatStore()
@@ -71,11 +95,39 @@ const emit = defineEmits(['send', 'stop'])
 const text = ref('')
 const inputEl = ref(null)
 
+const placeholder = computed(() => {
+  const members = store.activeGroupMembers
+  if (members.length > 1) return 'Message the group (@agent to direct)…'
+  if (members.length === 1) return `Message ${store.agentDisplay(members[0])}…`
+  return 'Message Hermes…'
+})
+
 function submit() {
   const trimmed = text.value.trim()
   if (!trimmed || store.isStreaming) return
   emit('send', trimmed)
   text.value = ''
+  resize()
+}
+
+// Insert an @mention token at the caret (or append). null → @all
+function insertMention(name) {
+  const token = name ? `@${name} ` : '@all '
+  const el = inputEl.value
+  const start = el ? el.selectionStart || text.value.length : text.value.length
+  text.value = text.value.slice(0, start) + token + text.value.slice(start)
+  resize()
+  nextTickFocus()
+}
+
+function nextTickFocus() {
+  requestAnimationFrame(() => {
+    const el = inputEl.value
+    if (el) {
+      el.focus()
+      el.setSelectionRange(el.value.length, el.value.length)
+    }
+  })
 }
 
 function resize() {

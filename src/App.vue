@@ -14,7 +14,7 @@
         </svg>
       </button>
       <h1 class="text-sm font-semibold flex-1 truncate">
-        {{ activeConvTitle }}
+        {{ store.activeConvTitle }}
       </h1>
       <button
         @click="showSettings = true"
@@ -37,7 +37,7 @@
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
             d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
         </svg>
-        <p class="text-sm">Send a message to start chatting with Hermes</p>
+        <p class="text-sm">Send a message to start chatting. Open the sidebar to message an agent directly or start a group.</p>
       </div>
 
       <ChatMessage
@@ -65,7 +65,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, nextTick } from 'vue'
+import { ref, watch, onMounted, nextTick } from 'vue'
 import { useChatStore } from './stores/chat.js'
 import ConnectionBanner from './components/ConnectionBanner.vue'
 import ChatMessage from './components/ChatMessage.vue'
@@ -78,11 +78,6 @@ const showSidebar = ref(false)
 const showSettings = ref(false)
 const chatContainer = ref(null)
 const scrollAnchor = ref(null)
-
-const activeConvTitle = computed(() => {
-  const conv = store.conversations.find(c => c.id === store.activeConversationId)
-  return conv?.title || 'Hermes Chat'
-})
 
 // Auto-scroll to bottom on new messages
 function scrollToBottom() {

@@ -2,7 +2,18 @@
 //
 // The Hermes gateway API Server runs on port 8642 and exposes an
 // OpenAI-compatible /v1/chat/completions endpoint. We stream SSE chunks
-// via fetch-event-source's PostEventSource (custom headers + auto-retry).
+// via fetch + ReadableStream (custom headers + auto-retry).
+//
+// Multi-agent routing: when `gateway.multiplex_profiles` is on, one gateway
+// serves every Hermes profile. Each profile (an "agent" / contact in the app)
+// is reached by URL prefix:
+//
+//   POST /v1/chat/completions            → default profile
+//   POST /p/<profile>/v1/chat/completions → named profile
+//
+// Auth: multiplex scopes API_SERVER_KEY per profile, so each agent has its own
+// bearer key. The client accepts a per-request `apiKey` override; when absent
+// it falls back to the global key (used for the default profile / legacy chat).
 //
 // Connection modes:
 //   local  — dev proxy via Vite (localhost:8642)
@@ -15,7 +26,9 @@ class HermesClient {
   constructor(baseUrl = DEFAULT_BASE) {
     this.baseUrl = baseUrl
     this.apiKey = null
-    this.abortController = null
+    // Track every in-flight AbortController so group-chat fan-out (multiple
+    // concurrent streams) can be stopped all at once.
+    this.activeControllers = new Set()
   }
 
   setBaseUrl(url) {
@@ -42,28 +55,47 @@ class HermesClient {
 
   // ---------------------------------------------------------------------------
   // Streaming chat completion via fetch + ReadableStream
-  // Uses raw fetch with a ReadableStream reader — much lighter than pulling in
-  // fetch-event-source as a dependency. Handles reconnection externally.
+  //
+  // opts.agent  — Hermes profile name. When set, the request is routed to that
+  //               profile's multiplex URL (POST /p/<name>/chat/completions).
+  //               Omit (undefined/null) to use the gateway's default profile.
+  // opts.apiKey — per-request Authorization override. When omitted, falls back
+  //               to the global this.apiKey. Needed because multiplex scopes
+  //               API_SERVER_KEY per profile — each agent has its own key.
   // ---------------------------------------------------------------------------
-  async streamChat(messages, callbacks) {
+  async streamChat(messages, callbacks, opts = {}) {
     const { onToken, onDone, onError } = callbacks
-    this.abortController = new AbortController()
+    const { agent, apiKey } = opts
+
+    const controller = new AbortController()
+    this.activeControllers.add(controller)
+
+    // Insert the /p/<agent>/ prefix between the base and the chat route:
+    //   /api/v1/p/researcher/v1/chat/completions
+    // (dev proxy strips /api, leaving /p/researcher/v1/chat/completions)
+    const prefix = agent ? `/p/${encodeURIComponent(agent)}` : ''
+    const url = `${this.baseUrl}${prefix}/chat/completions`
 
     const payload = {
       messages: messages.map(m => ({ role: m.role, content: m.content })),
       stream: true
     }
 
+    // Ensure the controller is cleared on every exit path.
+    const release = () => this.activeControllers.delete(controller)
+
     try {
       const headers = { 'Content-Type': 'application/json' }
-      if (this.apiKey) {
-        headers['Authorization'] = `Bearer ${this.apiKey}`
+      const key = apiKey !== undefined ? apiKey : this.apiKey
+      if (key) {
+        headers['Authorization'] = `Bearer ${key}`
       }
-      const response = await fetch(`${this.baseUrl}/chat/completions`, {
+
+      const response = await fetch(url, {
         method: 'POST',
         headers,
         body: JSON.stringify(payload),
-        signal: this.abortController.signal
+        signal: controller.signal
       })
 
       if (!response.ok) {
@@ -89,6 +121,7 @@ class HermesClient {
 
           const data = trimmed.slice(5).trim()
           if (data === '[DONE]') {
+            release()
             onDone && onDone()
             return
           }
@@ -104,18 +137,21 @@ class HermesClient {
           }
         }
       }
+      release()
       onDone && onDone()
     } catch (err) {
+      release()
       if (err.name === 'AbortError') return
       onError && onError(err)
     }
   }
 
+  // Abort every in-flight stream (group fan-out safety).
   abort() {
-    if (this.abortController) {
-      this.abortController.abort()
-      this.abortController = null
+    for (const c of this.activeControllers) {
+      c.abort()
     }
+    this.activeControllers.clear()
   }
 }
 

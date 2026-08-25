@@ -6,6 +6,8 @@ Hermes Chat is a zero-friction PWA chat client for [Hermes Agent](https://github
 
 **Core thesis:** Existing Hermes clients require desktop installs or Docker. A PWA gives instant mobile access — tap "Add to Home Screen" and you're chatting with your agent. No app store, no sideload, no native build.
 
+**Multi-agent:** Each of your Hermes *profiles* surfaces as an **Agent** (a contact) in the app. You can DM any agent directly, or put several agents in a **group chat** and @-mention them. Routing is built on the Hermes gateway's native profile multiplexing — see [Multi-Agent Chat](#multi-agent-chat--agents--contacts).
+
 ---
 
 ## Stack Rationale
@@ -122,6 +124,77 @@ The retry re-executes the full POST — Hermes is stateless (each request is ind
 
 ---
 
+## Multi-Agent Chat (Agents / Contacts)
+
+Every Hermes profile you run can be reached from the app as an **Agent** — a contact you DM directly, or group with others and @-mention. This rides on the Hermes gateway's native **profile multiplexing**: one gateway on one port serves *every* profile, addressed by URL prefix.
+
+### Backend prerequisite (required once)
+
+The gateway API Server must have profile multiplexing enabled:
+
+```yaml
+# in the gateway's config.yaml (the profile that owns the api_server gateway)
+gateway:
+  multiplex_profiles: true
+```
+
+then `hermes gateway restart`. With it on, `profiles_to_serve(multiplex=True)` serves the default profile plus every valid directory under `profiles/`. Without it, `/p/<profile>/` routes 404 (except the self-referential default), so DMs to non-default profiles fail closed.
+
+### Routing contract
+
+| Chat | HTTP route | Notes |
+|---|---|---|
+| Default / legacy conversation | `POST /api/v1/chat/completions` | gateway's default profile |
+| DM to `researcher` | `POST /api/v1/p/researcher/v1/chat/completions` | multiplex prefix |
+| Group member | interpolated `/p/<member>/…` per target | fan-out for `@all` |
+
+**Auth:** every profile shares the base URL, but multiplex **scopes `API_SERVER_KEY` per profile** — each agent authenticates with *its own* key (verified: default key on `/p/researcher/` → 401; researcher's own key → 200). The app lets you store a key per agent in Settings; an agent with no stored key falls back to the global key (the default profile's).
+
+### Data model
+
+**`agents`** (new table, keyed by `name` = profile id)
+| Field | Type | Notes |
+|---|---|---|
+| `name` | PK | profile id → `/p/<name>/` |
+| `displayName` | str | friendly label |
+| `color` | str | avatar accent hex |
+| `description` | str | one-liner |
+| `apiKey` | str | optional per-profile API key |
+| `sort` | int | ordering |
+
+Seeded from the profiles on this host (developer, researcher, operations, product-owner, quality-assurance, comedian); editable in Settings.
+
+**`conversations`** — added `kind` (`default`/`dm`/`group`) and `agentIds` (`[]` default, `[name]` DM, `[name, …]` group).
+
+**`messages`** — added `agentName` (which agent a message belongs to: author badge on assistant replies) and `targetAgents` (who a user @'d).
+
+### @-mention routing (`resolveTargets`)
+
+For a **group** conversation, an outgoing message is routed to:
+- **every member explicitly @mentioned** — `@Developer @QA` (multiple targets fan out concurrently)
+- **all members** on `@all`
+- **the primary (first) member** when unaddressed (keeps group traffic lean / cost-conscious)
+
+DMs resolve to their single agent; `default` conversations resolve to the gateway default (no prefix). Context for each reply is built from the *stored* conversation (placeholders + failed rows excluded, last 50), so concurrent fan-out replies are independent and don't cross-contaminate.
+
+### Concurrency
+
+`streamChat` tags each in-flight stream with its own `AbortController` (tracked in a Set) so group fan-out streams run in parallel and `stopStreaming()` aborts them all. `isStreaming` is a computed over `activeStreams` rather than a boolean.
+
+### UI
+
+- **Sidebar**: an **Agents** chip row (tap = instant DM), **New DM** and **New group chat** pickers, conversation list with agent badges.
+- **ChatMessage**: author/target badge above replies and @-targeted user messages.
+- **ChatInput**: tappable @-mention chips while in a group; dynamic placeholder.
+- **Settings**: add/remove agents (profile ids).
+
+### Known constraints
+
+- `@all`/multi-target fan-out calls each profile once per message (N × tokens) — by design, gated behind an explicit `@all`, no silent default fan-out.
+- Group chat is local state (like all conversations); Hermes itself has no multi-party memory of the "room" — each turn is an independent request carrying its own context.
+
+---
+
 ## State Management (Pinia Store)
 
 ```
@@ -196,6 +269,20 @@ src/db.js
 |---|---|---|---|
 | `key` | string | PK | e.g. 'baseUrl' |
 | `value` | any | | Stored value |
+
+**`agents`** (added in v2)
+| Field | Type | Index | Notes |
+|---|---|---|---|
+| `name` | string | PK | Hermes profile id → `/p/<name>/` |
+| `displayName` | string | | Friendly label |
+| `color` | string | | Avatar accent hex |
+| `description` | string | | One-liner |
+| `apiKey` | string | | Optional per-profile API key |
+| `sort` | number | | Ordering |
+
+`conversations` additionally carries `kind` ('default' | 'dm' | 'group') and
+`agentIds` (array of profile names); `messages` carries `agentName` and
+`targetAgents`. Seed data: one default conversation + the bundled agents.
 
 ### Write pattern
 
@@ -310,17 +397,19 @@ hermes-pwa/
     ├── main.js                   ← App bootstrap, Pinia install
     ├── App.vue                   ← Shell layout, sidebar/settings overlay
     ├── style.css                 ← Tailwind import only
-    ├── db.js                     ← Dexie schema + seed
+    ├── db.js                     ← Dexie schema + seed (agents, conversations, messages)
     ├── services/
-    │   └── hermes.js             ← SSE client, health check, connection monitor
+    │   └── hermes.js             ← SSE client (/p/<agent>/ routing), health check, connection monitor
     ├── stores/
-    │   └── chat.js               ← Pinia store — all chat state + actions
+    │   └── chat.js               ← Pinia store — chat + agents state, @-mention routing
     └── components/
-        ├── ChatMessage.vue       ← Message bubble with status variants
-        ├── ChatInput.vue         ← Auto-grow textarea, send/stop/clear
+        ├── AgentAvatar.vue       ← Colored initial-circle avatar for an agent
+        ├── ConversationBadge.vue ← Sidebar badge (dot for DM, dot cluster for group)
+        ├── ChatMessage.vue       ← Message bubble with author badge + status variants
+        ├── ChatInput.vue         ← Auto-grow textarea, @mention chips, send/stop/clear
         ├── ConnectionBanner.vue  ← Offline/reconnecting status strip
-        ├── Sidebar.vue           ← Conversation list overlay
-        └── SettingsModal.vue     ← API URL config + data management
+        ├── Sidebar.vue           ← Contacts (Agents), DM/group pickers, conversation list
+        └── SettingsModal.vue     ← API config + agent (profile) management, data wipe
 ```
 
 ---
