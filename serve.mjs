@@ -9,7 +9,8 @@
 // The /api prefix is stripped before forwarding (like the Vite dev proxy), and
 // Origin/Referer headers are removed (the gateway rejects browser origins).
 
-import { createServer, request } from 'node:http'
+import { createServer, request as httpRequest } from 'node:http'
+import { request as httpsRequest } from 'node:https'
 import { readFile, readdir } from 'node:fs/promises'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { extname, join, normalize } from 'node:path'
@@ -45,6 +46,12 @@ const HOP = new Set([
   'te', 'trailer', 'transfer-encoding', 'upgrade', 'host', 'content-length'
 ])
 const GATEWAY_HOST = `${GATEWAY.hostname}${GATEWAY.port ? ':' + GATEWAY.port : ''}`
+// Upstream scheme: TLS gateway (e.g. https://hermes.tillmanbuildstech.com) is
+// reached over https on the default 443; plain http on 80. Node's url.port is
+// empty when a default port is implied, so derive it explicitly per scheme.
+const GATEWAY_IS_HTTPS = GATEWAY.protocol === 'https:'
+const GATEWAY_PORT = GATEWAY.port || (GATEWAY_IS_HTTPS ? 443 : 80)
+const gatewayRequest = GATEWAY_IS_HTTPS ? httpsRequest : httpRequest
 
 // Console path families the app addresses on the gateway (forwarded verbatim).
 function isGatewayPath(path) {
@@ -199,8 +206,8 @@ function forwardGateway(req, res, path) {
   }
   headers['host'] = GATEWAY_HOST
 
-  const upReq = request(
-    { host: GATEWAY.hostname, port: GATEWAY.port, path: upstream, method: req.method, headers },
+  const upReq = gatewayRequest(
+    { host: GATEWAY.hostname, port: GATEWAY_PORT, path: upstream, method: req.method, headers },
     (upRes) => {
       res.writeHead(upRes.statusCode || 502, upRes.headers)
       upRes.pipe(res)
