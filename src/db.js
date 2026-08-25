@@ -34,18 +34,9 @@ const DEFAULT_AGENTS = [
   { name: 'comedian', displayName: 'Comedian', description: 'Jokes & banter agent', color: '#f472b6', sort: 5 }
 ]
 
-// Seed default conversation + agents on first run (idempotent)
+// Seed default agents on first run (idempotent). No default conversation is
+// created — a new chat only appears in the list once its first message is sent.
 db.on('ready', async () => {
-  const convCount = await db.conversations.count()
-  if (convCount === 0) {
-    await db.conversations.add({
-      title: 'New Chat',
-      lastMessage: '',
-      updatedAt: Date.now(),
-      kind: 'default',
-      agentIds: []
-    })
-  }
   const agentCount = await db.agents.count()
   if (agentCount === 0) {
     await db.agents.bulkAdd(DEFAULT_AGENTS)

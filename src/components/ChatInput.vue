@@ -27,6 +27,23 @@
     <div class="flex items-end gap-2">
       <!-- Text area (auto-grows) -->
       <div class="flex-1 relative">
+        <!-- Slash command suggestions -->
+        <div
+          v-if="showSlashPanel"
+          class="absolute bottom-full left-0 mb-2 w-72 max-h-56 overflow-y-auto bg-slate-800 rounded-xl border border-slate-700 shadow-xl z-20 py-1"
+        >
+          <div class="px-3 py-1.5 text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-700/60">Commands</div>
+          <button
+            v-for="c in filteredCommands"
+            :key="c.cmd"
+            @click="applyCommand(c)"
+            class="w-full text-left flex items-start justify-between gap-2 px-3 py-2 text-xs hover:bg-slate-700/60 transition-colors"
+          >
+            <span class="text-blue-300 font-mono shrink-0">{{ c.cmd }}</span>
+            <span class="text-slate-400 text-right leading-tight">{{ c.desc }}</span>
+          </button>
+          <div v-if="filteredCommands.length === 0" class="px-3 py-2 text-xs text-slate-500">No matching commands</div>
+        </div>
         <textarea
           ref="inputEl"
           v-model="text"
@@ -101,6 +118,23 @@ const placeholder = computed(() => {
   if (members.length === 1) return `Message ${store.agentDisplay(members[0])}…`
   return 'Message Hermes…'
 })
+
+// Slash-command suggestion popover.
+const showSlashPanel = computed(() =>
+  text.value.trim().startsWith('/') && !store.isStreaming
+)
+const filteredCommands = computed(() => {
+  const idx = text.value.indexOf(' ')
+  const prefix = (idx === -1 ? text.value : text.value.slice(0, idx)).trim().toLowerCase()
+  return store.COMMANDS.filter(c => c.cmd.toLowerCase().startsWith(prefix))
+})
+function applyCommand(c) {
+  // Commands with args insert just the base token so the user can fill in.
+  const base = c.cmd.split(' ')[0]
+  text.value = base + ' '
+  resize()
+  nextTickFocus()
+}
 
 function submit() {
   const trimmed = text.value.trim()

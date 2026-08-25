@@ -39,12 +39,36 @@ class HermesClient {
     this.apiKey = key
   }
 
+  // Gateway origin/root derived from baseUrl. Strips a trailing "/api/v1" so
+  // both API families (/v1/* chat and /api/* sessions) are addressed off one
+  // root:  "/api/v1" -> ""   "http://host:8642/api/v1" -> "http://host:8642"
+  gatewayRoot() {
+    return this.baseUrl.replace(/\/api\/v1\/?$/, '')
+  }
+
+  // Route path for an agent (profile) — multiplex prefix /p/<name>/.
+  agentPrefix(agent) {
+    return agent ? `/p/${encodeURIComponent(agent)}` : ''
+  }
+
+  chatUrl(agent) {
+    return `${this.gatewayRoot()}${this.agentPrefix(agent)}/v1/chat/completions`
+  }
+
+  createSessionUrl(agent) {
+    return `${this.gatewayRoot()}${this.agentPrefix(agent)}/api/sessions`
+  }
+
+  sessionMessagesUrl(agent, sessionId) {
+    return `${this.gatewayRoot()}${this.agentPrefix(agent)}/api/sessions/${encodeURIComponent(sessionId)}/messages?order=oldest`
+  }
+
   // ---------------------------------------------------------------------------
   // Health check — verifies the gateway is reachable
   // ---------------------------------------------------------------------------
   async healthCheck() {
     try {
-      const r = await fetch(`${this.baseUrl.replace(/\/api\/v1\/?$/, '')}/`, {
+      const r = await fetch(`${this.gatewayRoot()}/`, {
         signal: AbortSignal.timeout(5000)
       })
       return r.ok
@@ -64,22 +88,23 @@ class HermesClient {
   //               API_SERVER_KEY per profile — each agent has its own key.
   // ---------------------------------------------------------------------------
   async streamChat(messages, callbacks, opts = {}) {
-    const { onToken, onDone, onError } = callbacks
-    const { agent, apiKey } = opts
+    const { onToken, onDone, onError, onSessionId, onUsage } = callbacks
+    const { agent, apiKey, sessionId, model, provider } = opts
 
     const controller = new AbortController()
     this.activeControllers.add(controller)
 
-    // Insert the /p/<agent>/ prefix between the base and the chat route:
-    //   /api/v1/p/researcher/v1/chat/completions
-    // (dev proxy strips /api, leaving /p/researcher/v1/chat/completions)
-    const prefix = agent ? `/p/${encodeURIComponent(agent)}` : ''
-    const url = `${this.baseUrl}${prefix}/chat/completions`
+    // Same-origin gateway path: /v1/chat/completions or /p/<agent>/v1/...
+    const url = this.chatUrl(agent)
 
     const payload = {
       messages: messages.map(m => ({ role: m.role, content: m.content })),
       stream: true
     }
+    // Model/provider override: when supplied, the gateway uses these instead of
+    // the profile's configured default (honored for explicit provider values).
+    if (model) payload.model = model
+    if (provider) payload.provider = provider
 
     // Ensure the controller is cleared on every exit path.
     const release = () => this.activeControllers.delete(controller)
@@ -89,6 +114,11 @@ class HermesClient {
       const key = apiKey !== undefined ? apiKey : this.apiKey
       if (key) {
         headers['Authorization'] = `Bearer ${key}`
+      }
+      // Server-side session continuity: the gateway persists this turn to state.db
+      // so every device reading the same session id sees the full history.
+      if (sessionId) {
+        headers['X-Hermes-Session-Id'] = sessionId
       }
 
       const response = await fetch(url, {
@@ -100,6 +130,12 @@ class HermesClient {
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${await response.text().catch(() => 'unknown')}`)
+      }
+
+      // Echo back the effective session id so the client can persist it.
+      if (onSessionId) {
+        const echo = response.headers.get('X-Hermes-Session-Id')
+        if (echo) onSessionId(echo)
       }
 
       const reader = response.body.getReader()
@@ -128,6 +164,7 @@ class HermesClient {
 
           try {
             const parsed = JSON.parse(data)
+            if (onUsage && parsed.usage) onUsage(parsed.usage)
             const delta = parsed.choices?.[0]?.delta
             if (delta?.content) {
               onToken(delta.content)
@@ -153,6 +190,56 @@ class HermesClient {
     }
     this.activeControllers.clear()
   }
+
+  // ---------------------------------------------------------------------------
+  // Server-side session persistence (cross-device history sync)
+  // ---------------------------------------------------------------------------
+  // Explicitly create a Hermes session row. Returns { id } or throws.
+  async createSession(agent, { apiKey } = {}) {
+    const headers = { 'Content-Type': 'application/json' }
+    const key = apiKey !== undefined ? apiKey : this.apiKey
+    if (key) headers['Authorization'] = `Bearer ${key}`
+    const r = await fetch(this.createSessionUrl(agent), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({})
+    })
+    if (!r.ok) throw new Error(`createSession HTTP ${r.status}`)
+    const data = await r.json()
+    const sessionObj = data.session || data
+    return { id: sessionObj && (sessionObj.id || sessionObj.session_id) }
+  }
+
+  // Fetch a session's persisted messages (oldest-first). Returns an array of
+  // { id, role, content, timestamp } records, or [] when the session is empty.
+  async fetchSessionMessages(agent, sessionId, { apiKey } = {}) {
+    const headers = {}
+    const key = apiKey !== undefined ? apiKey : this.apiKey
+    if (key) headers['Authorization'] = `Bearer ${key}`
+    const r = await fetch(this.sessionMessagesUrl(agent, sessionId), { headers })
+    if (!r.ok) {
+      // 404 = session not created yet — treat as empty.
+      if (r.status === 404) return []
+      throw new Error(`fetchSessionMessages HTTP ${r.status}`)
+    }
+    const data = await r.json()
+    return (data && data.data) || []
+  }
+
+  // List a profile's persisted sessions (used to rediscover conversations on a
+  // fresh device). Returns an array of { id, title, preview, last_active, ... }.
+  async listSessions(agent, { apiKey } = {}, limit = 200) {
+    const headers = {}
+    const key = apiKey !== undefined ? apiKey : this.apiKey
+    if (key) headers['Authorization'] = `Bearer ${key}`
+    const r = await fetch(
+      `${this.gatewayRoot()}${this.agentPrefix(agent)}/api/sessions?limit=${limit}`,
+      { headers }
+    )
+    if (!r.ok) return []
+    const data = await r.json()
+    return (data && data.data) || []
+  }
 }
 
 export const hermesClient = new HermesClient()
@@ -176,10 +263,9 @@ export function createConnectionMonitor(callbacks) {
     stopHealthChecks()
     healthInterval = setInterval(async () => {
       const healthy = await hermesClient.healthCheck()
-      if (healthy && !navigator.onLine) {
-        // Browser thinks offline but endpoint reachable — treat as online
-        goOnline()
-      }
+      // Recover from a transient "offline" (e.g. a failed send) as soon as the
+      // gateway is reachable again, even if the browser thinks it's online.
+      if (healthy) goOnline()
     }, intervalMs)
   }
 

@@ -110,25 +110,51 @@
 
         <!-- Conversation list -->
         <div class="flex-1 overflow-y-auto py-1">
-          <button
-            v-for="conv in store.conversations"
+          <div
+            v-for="conv in store.sidebarConversations"
             :key="conv.id"
             @click="select(conv.id)"
-            class="w-full text-left px-4 py-3 hover:bg-slate-800/50 transition-colors border-l-2"
+            class="w-full text-left px-4 py-3 hover:bg-slate-800/50 transition-colors border-l-2 cursor-pointer group"
             :class="conv.id === store.activeConversationId
               ? 'border-blue-500 bg-slate-800/70'
               : 'border-transparent'"
           >
             <div class="flex items-center gap-2">
               <ConversationBadge :conv="conv" :store="store" />
-              <span class="text-sm font-medium truncate text-slate-200 flex-1">{{ title(conv) }}</span>
+              <!-- Inline title edit -->
+              <input
+                v-if="editingId === conv.id"
+                v-model="editTitle"
+                ref="titleInput"
+                @click.stop
+                @keydown.enter.prevent="saveTitle(conv.id)"
+                @keydown.esc="editingId = null"
+                @blur="saveTitle(conv.id)"
+                class="flex-1 bg-slate-900 text-sm font-medium rounded px-1.5 py-0.5 outline-none ring-1 ring-blue-500 text-slate-100"
+              />
+              <span
+                v-else
+                class="text-sm font-medium truncate text-slate-200 flex-1"
+                @click.stop
+              >{{ title(conv) }}</span>
+              <button
+                v-if="editingId !== conv.id"
+                @click.stop="startEdit(conv)"
+                class="opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-slate-200 transition-opacity shrink-0"
+                aria-label="Rename"
+              >
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+              </button>
             </div>
             <div class="text-xs text-slate-500 truncate mt-0.5 pl-10">
               {{ conv.lastMessage || 'No messages yet' }}
             </div>
-          </button>
+          </div>
 
-          <div v-if="store.conversations.length === 0" class="px-4 py-8 text-center text-slate-600 text-sm">
+          <div v-if="store.sidebarConversations.length === 0" class="px-4 py-8 text-center text-slate-600 text-sm">
             No conversations yet
           </div>
         </div>
@@ -143,7 +169,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, nextTick } from 'vue'
 import { useChatStore } from '../stores/chat.js'
 import Avatar from './AgentAvatar.vue'
 import ConversationBadge from './ConversationBadge.vue'
@@ -153,6 +179,9 @@ const emit = defineEmits(['close'])
 
 const picking = ref(null) // null | 'dm' | 'group'
 const selected = ref([])
+const editingId = ref(null)
+const editTitle = ref('')
+const titleInput = ref(null)
 
 function toggleAgent(agent) {
   if (picking.value === 'dm') {
@@ -187,5 +216,20 @@ function title(conv) {
 function select(id) {
   store.switchConversation(id)
   emit('close')
+}
+
+function startEdit(conv) {
+  editingId.value = conv.id
+  editTitle.value = store.convTitle(conv)
+  nextTick(() => {
+    const el = Array.isArray(titleInput.value) ? titleInput.value.find(Boolean) : titleInput.value
+    if (el && el.focus) { el.focus(); el.select && el.select() }
+  })
+}
+
+function saveTitle(id) {
+  if (editingId.value === null) return
+  store.renameConversation(id, editTitle.value)
+  editingId.value = null
 }
 </script>

@@ -39,22 +39,21 @@ export default defineConfig({
   ],
   server: {
     proxy: {
-      '/api': {
-        target: 'http://localhost:8642',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, ''),
-        configure: (proxy) => {
-          proxy.on('proxyReq', (proxyReq, req) => {
-            // Forward Authorization header to the gateway
-            if (req.headers['authorization']) {
-              proxyReq.setHeader('authorization', req.headers['authorization'])
-            }
-            // Strip Origin/Referer to avoid gateway CORS rejection
-            proxyReq.removeHeader('origin')
-            proxyReq.removeHeader('referer')
-          })
-        }
-      }
+      // The app builds gateway paths under an origin/bare root: chat /v1/*,
+      // multiplex /p/<profile>/*, sessions /api/*. Forward all three to the
+      // gateway verbatim, stripping browser Origin/Referer (gateway 403s on
+      // them) and forwarding Authorization.
+      '/v1': { target: 'http://localhost:8642', changeOrigin: true, configure: (p) => p.on('proxyReq', stripBrowserHeaders) },
+      '/p': { target: 'http://localhost:8642', changeOrigin: true, configure: (p) => p.on('proxyReq', stripBrowserHeaders) },
+      '/api': { target: 'http://localhost:8642', changeOrigin: true, configure: (p) => p.on('proxyReq', stripBrowserHeaders) }
     }
   }
 })
+
+function stripBrowserHeaders(proxyReq, req) {
+  if (req.headers['authorization']) {
+    proxyReq.setHeader('authorization', req.headers['authorization'])
+  }
+  proxyReq.removeHeader('origin')
+  proxyReq.removeHeader('referer')
+}
