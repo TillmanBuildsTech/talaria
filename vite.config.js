@@ -2,10 +2,13 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { VitePWA } from 'vite-plugin-pwa'
 import tailwindcss from '@tailwindcss/vite'
+import pkg from './package.json'
 
 export default defineConfig({
   define: {
-    __HERMES_API_KEY__: JSON.stringify(process.env.HERMES_API_KEY || '')
+    __HERMES_API_KEY__: JSON.stringify(process.env.HERMES_API_KEY || ''),
+    // Single source of truth for the app version = package.json `version`.
+    __APP_VERSION__: JSON.stringify(pkg.version)
   },
   plugins: [
     vue(),

@@ -144,6 +144,11 @@
             Clear All Data
           </button>
         </div>
+
+        <!-- Version -->
+        <div class="pt-3 border-t border-slate-800 text-center">
+          <span class="text-xs text-slate-600">Talaria v{{ appVersion }}</span>
+        </div>
       </div>
     </div>
   </div>
@@ -157,6 +162,9 @@ import AgentAvatar from './AgentAvatar.vue'
 
 const store = useChatStore()
 const emit = defineEmits(['close'])
+
+// Build-time-injected app version (vite.config → __APP_VERSION__ from package.json).
+const appVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.1.0'
 
 const urlInput = ref(store.baseUrl)
 const keyInput = ref(store.apiKey)
