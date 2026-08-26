@@ -386,8 +386,14 @@ export const useChatStore = defineStore('chat', () => {
       } catch { list = [] }
       for (const s of list || []) {
         const parsed = parseTalariaSession(s.id)
-        if (!parsed) continue
-        const agent = parsed.agent
+        // Adopt native talaria-* sessions OR desktop/CLI sessions explicitly
+        // shared to Talaria (flagged `pinned` by the /talaria Hermes command).
+        // Preserves the opt-in design: plain desktop/CLI sessions never
+        // surface here unless a command deliberately shares them. A shared
+        // session keeps its OWN id, so continuing stays on the SAME session
+        // (no copy) — the two surfaces never diverge.
+        if (!parsed && !s.pinned) continue
+        const agent = parsed ? parsed.agent : (profile || null)
         const key = agentKeyName(agent)
         const uniq = key + '|' + s.id
         if (seen.has(uniq)) continue
