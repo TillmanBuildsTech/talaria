@@ -12,15 +12,18 @@
     </div>
 
     <div
-      class="max-w-[85%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap break-words"
+      class="max-w-[85%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed break-words"
       :class="bubbleClass"
     >
       <!-- Content -->
-      <span>{{ message.content }}</span>
+      <div v-if="isThinking" class="thinking-dots" aria-label="Thinking">
+        <span /><span /><span />
+      </div>
+      <div v-else class="markdown" v-html="rendered" />
 
-      <!-- Streaming cursor -->
+      <!-- Streaming cursor (only once tokens are actually flowing) -->
       <span
-        v-if="message.status === 'streaming'"
+        v-if="message.status === 'streaming' && !isThinking"
         class="inline-block w-2 h-4 ml-0.5 bg-blue-400 animate-pulse align-text-bottom rounded-sm"
       />
 
@@ -62,7 +65,11 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import { useChatStore } from '../stores/chat.js'
+
+marked.setOptions({ gfm: true, breaks: true })
 
 const props = defineProps({
   message: { type: Object, required: true }
@@ -71,6 +78,17 @@ const props = defineProps({
 defineEmits(['retry'])
 
 const store = useChatStore()
+
+// Parse markdown -> HTML, then sanitize. LLM output must never hit the DOM raw.
+const rendered = computed(() =>
+  DOMPurify.sanitize(marked.parse(props.message.content || ''))
+)
+
+// "Thinking" state: streaming placeholder that hasn't produced any tokens yet.
+const isThinking = computed(() =>
+  props.message.status === 'streaming' &&
+  !(props.message.content || '').trim()
+)
 
 // Live clock used to show elapsed time while a reply is streaming.
 const now = ref(Date.now())
