@@ -1,0 +1,69 @@
+name: CI
+
+# Build + test every PR to main, and gate merges on a version bump. Also runs
+# on push to main (post-merge confidence) without the version gate.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The version-bump gate: the PR head must carry a package.json version
+  # strictly greater than main's, so every merge ships a new version.
+  version-check:
+    name: Version bump required
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout base (main)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: base
+      - name: Checkout head (PR)
+        uses: actions/checkout@v4
+        with:
+          path: head
+      - name: Verify version bumped vs main
+        run: node head/scripts/check-version-bump.mjs base/package.json head/package.json
+
+  build-test:
+    name: Build & test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'   # matches Dockerfile (node:22-alpine)
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Run tests
+        run: npm run test
+      - name: Build
+        run: npm run build
+
+  # Keep the shipped Docker image honest: the container build is the real
+  # artifact Talaria runs as, so build it in CI too.
+  docker-build:
+    name: Docker image build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: talaria:ci
