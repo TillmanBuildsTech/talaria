@@ -1,0 +1,4 @@
+name: talaria-transfer
+version: 0.1.0
+description: "Share a desktop Hermes session to the Talaria PWA by pinning it, so Talaria adopts it and continues the SAME session in place (no copy). Adds /talaria, /talaria unpin, /talaria list."
+author: "Brandon Tillman"
