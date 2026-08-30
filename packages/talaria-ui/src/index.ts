@@ -112,3 +112,24 @@ export type { ReposState } from "./stores/repos";
 export { useReposStore } from "./stores/repos";
 export type { ObservabilityState } from "./stores/observability";
 export { useObservabilityStore, isArtifactBacked, isReviewable } from "./stores/observability";
+
+export { DocsEditor } from "./components/docs-editor";
+export {
+  configureDocsFileSystem,
+  createDesktopTransport,
+  docsClient,
+  docsDir,
+  docsFilePath,
+  normalizeDocName,
+  PROJECTS_ROOT,
+} from "./services/docs";
+export type {
+  DocsClient as DocsClientClass,
+  DocsFileSystem,
+  DocsTransport,
+  DocsTransportKind,
+  ProjectDoc,
+  ProjectDocMeta,
+} from "./services/docs";
+export type { DocsState } from "./stores/docs";
+export { useDocsStore } from "./stores/docs";

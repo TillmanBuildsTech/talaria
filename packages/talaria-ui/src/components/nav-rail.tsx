@@ -111,7 +111,7 @@ const DEFAULT_ENTRIES: Array<NavEntry> = [
   { id: "prs", label: "Pull Requests", icon: <PrIcon /> },
   { id: "deployments", label: "Deployments", icon: <DeployIcon /> },
   { id: "observability", label: "Observability", icon: <ActivityIcon /> },
-  { id: "docs", label: "Docs", icon: <DocIcon />, disabled: true, note: "coming soon" },
+  { id: "docs", label: "Docs", icon: <DocIcon /> },
   { id: "editor", label: "Editor", icon: <EditorIcon />, disabled: true, note: "desktop only" },
   { id: "settings", label: "Settings", icon: <SettingsIcon /> },
 ];

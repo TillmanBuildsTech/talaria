@@ -4,6 +4,7 @@ import { ChatMessage } from "./components/chat-message";
 import { ConnectionBanner } from "./components/connection-banner";
 import { Deployments } from "./components/deployments";
 import { NavRail, type NavModuleId } from "./components/nav-rail";
+import { DocsEditor } from "./components/docs-editor";
 import { Observability } from "./components/observability";
 import { PrPanel } from "./components/pr-panel";
 import { ProjectPicker } from "./components/project-picker";
@@ -12,6 +13,7 @@ import { SettingsPage } from "./components/settings-page";
 import { Sidebar } from "./components/sidebar";
 import { useChatStore } from "./stores/chat";
 import { useGitHubStore } from "./stores/github";
+import { useDocsStore } from "./stores/docs";
 import { useProjectsStore } from "./stores/projects";
 import { useObservabilityStore } from "./stores/observability";
 
@@ -141,6 +143,7 @@ export function App() {
   useEffect(() => {
     (async () => {
       await projectsInit();
+      await useDocsStore.getState().init();
     })();
     // biome-ignore lint/correctness/useExhaustiveDependencies: init once on mount
   }, []);
@@ -308,6 +311,10 @@ export function App() {
         ) : module === "deployments" ? (
           <div className="flex-1 min-h-0">
             <Deployments owner="tillmanbuildstech" repo="talaria" project={activeProjectId} />
+          </div>
+        ) : module === "docs" ? (
+          <div className="flex-1 min-h-0">
+            <DocsEditor />
           </div>
         ) : module === "settings" ? (
           <SettingsPage onClose={() => setModule("chat")} />
