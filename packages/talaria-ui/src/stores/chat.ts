@@ -2,8 +2,21 @@ import { create } from "zustand";
 import db, { type Agent, type ChatMessage, type Conversation } from "../db";
 import { KNOWN_MODELS, type ModelInfo, knownWindowFor } from "../models";
 import { createConnectionMonitor, hermesClient } from "../services/hermes";
+import { useProjectsStore } from "./projects";
 
 const DEFAULT_CONTEXT_WINDOW = 128_000;
+
+// ── project scoping (P9) ─────────────────────────────────────────────────
+// Scoped stores read the active project at their boundary. This chat store
+// filters conversations by the active scope and tags new ones with it, so
+// switching projects swaps the whole chat namespace.
+function activeScope(): string | null {
+  return useProjectsStore.getState().scopeForCreate();
+}
+
+function inScope(conv: Conversation): boolean {
+  return (conv.projectId ?? null) === activeScope();
+}
 
 export type ConnectionStatus = "connected" | "reconnecting" | "offline";
 
@@ -120,6 +133,7 @@ export type ChatState = {
   addAgent: (agent: { name: string; displayName?: string; color?: string; description?: string; apiKey?: string }) => Promise<void>;
   removeAgent: (name: string) => Promise<void>;
   loadConversations: () => Promise<void>;
+  reloadForScope: () => Promise<void>;
   recountMessageCount: (id: number) => Promise<void>;
   renameConversation: (id: number, title: string) => Promise<void>;
   loadMessages: () => Promise<void>;
@@ -169,7 +183,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   // Only conversations that actually have messages appear in the sidebar —
   // a brand-new (untitled, unsent) chat is hidden until something is said.
-  sidebarConversations: () => get().conversations.filter((c) => (c.messageCount || 0) > 0),
+  // Scoped to the active project (P9): a specific project shows only its own
+  // chats; the global scope shows the unassigned ones.
+  sidebarConversations: () => get().conversations.filter((c) => (c.messageCount || 0) > 0 && inScope(c)),
 
   agentDisplay: (name) => {
     if (!name) return null;
@@ -326,10 +342,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     await get().loadAgents();
   },
 
-  // Load conversations list from IndexedDB
+  // Load conversations list from IndexedDB, filtered to the active project
+  // scope (P9).
   async loadConversations() {
     const list = await db.conversations.orderBy("updatedAt").reverse().toArray();
-    for (const c of list) {
+    const scoped = list.filter(inScope);
+    for (const c of scoped) {
       const n = await db.messages.where("conversationId").equals(c.id as number).count();
       // Server-discovered conversations carry a server message_count but no
       // local rows yet (messages load from the gateway when opened) — don't
@@ -337,10 +355,29 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // sidebar. Local rows win once they exist (e.g. after opening a chat).
       c.messageCount = n > 0 ? n : c.messageCount || 0;
     }
-    set({ conversations: list });
+    set({ conversations: scoped });
+    // A conversation from a now-inactive project scope must not stay selected
+    // (P9 — no cross-project leakage in the active view).
+    const { activeConversationId } = get();
+    if (activeConversationId && !scoped.some((c) => c.id === activeConversationId)) {
+      set({ activeConversationId: null, messages: [] });
+    }
     if (!get().activeConversationId) {
-      const firstReal = list.find((c) => (c.messageCount || 0) > 0);
+      const firstReal = scoped.find((c) => (c.messageCount || 0) > 0);
       if (firstReal) set({ activeConversationId: firstReal.id ?? null });
+    }
+  },
+
+  // Re-query the whole chat namespace for a newly-selected project scope and
+  // drop any selection from the previous scope. Called by the app when the
+  // user switches projects so the view/data namespace swaps wholesale.
+  async reloadForScope() {
+    set({ messages: [] });
+    await get().loadConversations();
+    if (get().activeConversationId) {
+      await get().loadMessages();
+      const conv = await db.conversations.get(get().activeConversationId as number);
+      await get().syncConversationFromServer(conv ?? null);
     }
   },
 
@@ -508,8 +545,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
   // 1:1 with a specific agent (profile).
   async newDirectMessage(agentName) {
     if (!agentName) return null;
-    // Reuse an existing DM with this agent if there is one.
-    const existing = await db.conversations.filter((c) => c.kind === "dm" && c.agentIds?.[0] === agentName).first();
+    // Reuse an existing DM with this agent in THIS scope if there is one
+    // (never reach into another project's namespace, P9).
+    const existing = await db.conversations
+      .filter((c) => c.kind === "dm" && c.agentIds?.[0] === agentName && (c.projectId ?? null) === activeScope())
+      .first();
     const id = existing
       ? (existing.id as number)
       : ((await db.conversations.add({
@@ -518,6 +558,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           updatedAt: Date.now(),
           kind: "dm",
           agentIds: [agentName],
+          projectId: activeScope(),
         })) as number);
     set({ activeConversationId: id });
     await get().loadMessages();
@@ -537,6 +578,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       updatedAt: Date.now(),
       kind: "group",
       agentIds: members,
+      projectId: activeScope(),
     })) as number;
     set({ activeConversationId: id, messages: [] });
     await get().loadConversations();
@@ -584,6 +626,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         agentIds: [],
         messageCount: 0,
         sessions: {},
+        projectId: activeScope(),
       });
       set({ activeConversationId: id });
       conv = await db.conversations.get(id);
@@ -708,6 +751,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         agentIds: [],
         messageCount: 0,
         sessions: {},
+        projectId: activeScope(),
       });
       set({ activeConversationId: id });
       conv = await db.conversations.get(id);
