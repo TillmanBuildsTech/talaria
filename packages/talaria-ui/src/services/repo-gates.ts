@@ -8,6 +8,7 @@
 
 import type {
   BranchProtectionResult,
+  CheckRun,
   CombinedStatus,
   GitHubRepo,
   MergeMethod,
@@ -15,6 +16,7 @@ import type {
   PullRequest,
   PullRequestReview,
 } from "./github";
+import { checkOutcome } from "./github";
 
 export type RepoGates = {
   branchProtected: boolean;
@@ -101,20 +103,42 @@ export type RequiredCheckResult = {
 };
 
 /**
- * Resolve every required-check context against the PR head's combined status.
- * A context GitHub hasn't reported yet is MISSING (not satisfied) — the merge
- * stays gated until it's both present and green (P1: never pre-approve a
- * check the repo requires).
+ * Resolve every required-check context against the PR head's check runs AND
+ * legacy combined status (S1 fix: GitHub Actions jobs live only in
+ * /commits/{sha}/check-runs; the legacy /commits/{sha}/status is empty for
+ * them). A required context that neither source has reported yet is MISSING
+ * (not satisfied) — the merge stays gated until it's present and green (P1:
+ * never pre-approve a check the repo requires).
+ *
+ * Check runs win when present because they're the current, complete record
+ * for Actions-backed required checks; legacy statuses still cover repos that
+ * use commit-status contexts (some repos report those instead of/in addition
+ * to check runs). Both are supported so the gate is never more restrictive
+ * than GitHub (spec §6.2).
  */
-export function resolveRequiredChecks(gates: RepoGates, status: CombinedStatus | null): Array<RequiredCheckResult> {
+export function resolveRequiredChecks(
+  gates: RepoGates,
+  status: CombinedStatus | null,
+  runs: Array<CheckRun> = []
+): Array<RequiredCheckResult> {
   if (!gates.branchProtected || gates.requiredChecks.length === 0) return [];
   const byContext = new Map<string, string>();
   for (const s of status?.statuses ?? []) byContext.set(s.context, s.state);
+  // A check run's conclusion is the authoritative state for Actions jobs.
+  for (const run of runs) byContext.set(run.name, checkOutcomeToState(run));
   return gates.requiredChecks.map((context) => {
     const state = byContext.get(context);
     if (!state) return { context, state: "missing", satisfied: false };
     return { context, state, satisfied: state === "success" };
   });
+}
+
+/** Map a check run's outcome to the gate's status vocabulary. */
+function checkOutcomeToState(run: CheckRun): string {
+  const outcome = checkOutcome(run);
+  if (outcome === "pass") return "success";
+  if (outcome === "fail") return "failure";
+  return "pending";
 }
 
 /** The merge methods the repo permits (§6.3). Squash always when not the sole disallowed. */
@@ -160,10 +184,11 @@ export function canMergePullRequest(input: {
   gates: RepoGates;
   pr: PullRequest;
   status: CombinedStatus | null;
+  runs?: Array<CheckRun>;
   reviewState: ReviewState;
   reviewCount: number;
 }): MergeEligibility {
-  const { gates, pr, status, reviewState, reviewCount } = input;
+  const { gates, pr, status, runs = [], reviewState, reviewCount } = input;
 
   if (!gates.branchProtected) {
     return { mergeable: true, reasons: [] };
@@ -179,7 +204,7 @@ export function canMergePullRequest(input: {
     reasons.push(`PR is not mergeable (${ms})`);
   }
 
-  for (const c of resolveRequiredChecks(gates, status)) {
+  for (const c of resolveRequiredChecks(gates, status, runs)) {
     if (!c.satisfied) {
       reasons.push(
         c.state === "missing" ? `Required check "${c.context}" hasn't run` : `Required check "${c.context}" is ${c.state}`
