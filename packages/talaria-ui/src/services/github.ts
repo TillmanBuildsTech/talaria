@@ -387,6 +387,83 @@ export function summarizeChecks(runs: Array<CheckRun>, required: Array<string>):
   };
 }
 
+// Types for the repos / PRs / review / merge surface (M2). These mirror the
+// relevant GitHub REST shapes; unknown fields are tolerated so upgrades of the
+// API don't break the client (`GitHubResponse<T>` parses best-effort).
+// ---------------------------------------------------------------------------
+
+export type GitHubRepo = {
+  id: number;
+  name: string;
+  full_name: string;
+  private: boolean;
+  default_branch: string;
+  html_url: string;
+  owner: { login: string };
+  allow_squash_merge?: boolean;
+  allow_merge_commit?: boolean;
+  allow_rebase_merge?: boolean;
+};
+
+export type PullRequest = {
+  number: number;
+  title: string;
+  user?: { login: string };
+  state: string; // open | closed
+  merged?: boolean;
+  html_url: string;
+  head: { ref: string; sha: string; repo?: { name: string; full_name: string; default_branch: string } | null };
+  base: { ref: string; sha: string; repo?: { name: string; full_name: string } | null };
+  created_at?: string;
+  updated_at?: string;
+  mergeable?: boolean | null;
+  mergeable_state?: string; // clean | dirty | blocked | unknown | draft
+  draft?: boolean;
+  requested_reviewers?: Array<{ login: string }>;
+};
+
+export type PullRequestFile = {
+  filename: string;
+  status: string; // added | modified | removed | renamed | copied | changed | unchanged
+  additions: number;
+  deletions: number;
+  changes: number;
+  patch?: string;
+};
+
+export type ReviewEvent = "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
+
+export type PullRequestReview = {
+  id: number;
+  user: { login: string } | null;
+  state: string; // PENDING | COMMENTED | APPROVED | CHANGES_REQUESTED | DISMISSED
+  body?: string;
+  submitted_at?: string;
+};
+
+export type CombinedStatus = {
+  state: string; // success | failure | error | pending
+  statuses: Array<{ context: string; state: string }>;
+};
+
+export type ProtectedBranch = {
+  required_status_checks?: { contexts: Array<string>; strict?: boolean } | null;
+  required_pull_request_reviews?: {
+    required_approving_review_count?: number;
+    dismiss_stale_reviews_on_push?: boolean;
+  } | null;
+  enforce_admins?: { enabled: boolean };
+};
+
+export type BranchProtectionResult = { status: number; data: ProtectedBranch | null };
+
+export type MergeMethod = "squash" | "merge" | "rebase";
+
+// Discriminated union so callers can narrow on `.merged`.
+export type MergeResult =
+  | { merged: true; sha: string }
+  | { merged: false; status: number; message?: string; errors?: Array<{ message: string }> };
+
 // ---------------------------------------------------------------------------
 // GitHubClient — the shared service both shells use.
 // ---------------------------------------------------------------------------
@@ -536,24 +613,27 @@ export class GitHubClient {
     return { summary: summarizeChecks(runs, required), runs };
   }
 
-  // -------------------------------------------------------------------------
-  // Repo browser (M2, spec §5.1/§5.2)
+  // Repos / PRs / review / merge (M2). All paths are stable GitHub REST.
   // -------------------------------------------------------------------------
 
-  // GET /user/repos — the repos the connected account can access.
-  async listRepos(): Promise<Array<RepoMeta>> {
-    const r = await this.request<Array<RepoMeta>>({
-      method: "GET",
-      path: "/user/repos?per_page=100&affiliation=owner,collaborator&sort=updated",
-    });
-    if (!r.ok) {
-      const msg = (r.data as unknown as { message?: string })?.message || `HTTP ${r.status}`;
-      throw new Error(msg);
-    }
-    return r.data || [];
+  async getRepo(owner: string, repo: string): Promise<GitHubRepo> {
+    const r = await this.request<GitHubRepo>({ method: "GET", path: `/repos/${owner}/${repo}` });
+    if (!r.ok) throw new Error((r.data as { message?: string })?.message || `HTTP ${r.status}`);
+    return r.data;
   }
 
-  // GET /repos/{o}/{r}/branches
+  // List this account's repos (owned + collaborator). `affiliation=owner,collaborator`
+  // keeps the list personal (P2) rather than org-service-catalog.
+  async listRepos(): Promise<Array<GitHubRepo>> {
+    const r = await this.request<Array<GitHubRepo>>({
+      method: "GET",
+      path: `/user/repos?affiliation=owner,collaborator&sort=updated&per_page=100`,
+    });
+    if (!r.ok) throw new Error((r.data as { message?: string })?.message || `HTTP ${r.status}`);
+    return Array.isArray(r.data) ? r.data : [];
+  }
+
+  // GET /repos/{o}/{r}/branches — branches of a repo (repo browser).
   async listBranches(owner: string, repo: string): Promise<Array<Branch>> {
     const r = await this.request<Array<Branch>>({
       method: "GET",
@@ -578,6 +658,92 @@ export class GitHubClient {
       throw new Error(msg);
     }
     return r.data || [];
+  }
+
+  async listPullRequests(owner: string, repo: string, state: "open" | "closed" | "all" = "open"): Promise<Array<PullRequest>> {
+    const r = await this.request<Array<PullRequest>>({
+      method: "GET",
+      path: `/repos/${owner}/${repo}/pulls?state=${state}&per_page=100`,
+    });
+    if (!r.ok) throw new Error((r.data as { message?: string })?.message || `HTTP ${r.status}`);
+    return Array.isArray(r.data) ? r.data : [];
+  }
+
+  async getPullRequest(owner: string, repo: string, number: number): Promise<PullRequest> {
+    const r = await this.request<PullRequest>({
+      method: "GET",
+      path: `/repos/${owner}/${repo}/pulls/${number}`,
+    });
+    if (!r.ok) throw new Error((r.data as { message?: string })?.message || `HTTP ${r.status}`);
+    return r.data;
+  }
+
+  async getPullRequestFiles(owner: string, repo: string, number: number): Promise<Array<PullRequestFile>> {
+    const r = await this.request<Array<PullRequestFile>>({
+      method: "GET",
+      path: `/repos/${owner}/${repo}/pulls/${number}/files?per_page=100`,
+    });
+    if (!r.ok) throw new Error((r.data as { message?: string })?.message || `HTTP ${r.status}`);
+    return Array.isArray(r.data) ? r.data : [];
+  }
+
+  async listReviews(owner: string, repo: string, number: number): Promise<Array<PullRequestReview>> {
+    const r = await this.request<Array<PullRequestReview>>({
+      method: "GET",
+      path: `/repos/${owner}/${repo}/pulls/${number}/reviews`,
+    });
+    if (!r.ok) throw new Error((r.data as { message?: string })?.message || `HTTP ${r.status}`);
+    return Array.isArray(r.data) ? r.data : [];
+  }
+
+  async submitReview(owner: string, repo: string, number: number, event: ReviewEvent, body?: string): Promise<void> {
+    const r = await this.request<{ id: number }>({
+      method: "POST",
+      path: `/repos/${owner}/${repo}/pulls/${number}/reviews`,
+      body: { event, body: body || "" },
+    });
+    if (!r.ok) throw new Error((r.data as { message?: string })?.message || `Review HTTP ${r.status}`);
+  }
+
+  // Branch-protection rules for a branch. Returns `{ status: 404, data: null }`
+  // when the branch is UNPROTECTED — that is meaningful (P1): an unprotected
+  // branch means the portal imposes no PR ceremony.
+  async getBranchProtection(owner: string, repo: string, branch: string): Promise<BranchProtectionResult> {
+    const r = await this.request<ProtectedBranch>({
+      method: "GET",
+      path: `/repos/${owner}/${repo}/branches/${encodeURIComponent(branch)}/protection`,
+    });
+    if (r.status === 404 || r.status === 403) return { status: 404, data: null };
+    if (!r.ok) return { status: r.status, data: null };
+    return { status: r.status, data: r.data };
+  }
+
+  async getCommitStatus(owner: string, repo: string, sha: string): Promise<CombinedStatus> {
+    const r = await this.request<CombinedStatus>({
+      method: "GET",
+      path: `/repos/${owner}/${repo}/commits/${sha}/status`,
+    });
+    if (!r.ok) throw new Error((r.data as { message?: string })?.message || `Status HTTP ${r.status}`);
+    return r.data;
+  }
+
+  // PUT …/merge. GitHub enforces the repo's actual gates server-side — the
+  // portal surfaces them beforehand (repo-gates) and mirrors the outcome; a
+  // 405/409 here means the repo rejected the merge (mergeable_state, missing
+  // review, conflict) and we surface GitHub's message verbatim (spec §11).
+  async mergePullRequest(owner: string, repo: string, number: number, mergeMethod: MergeMethod): Promise<MergeResult> {
+    const r = await this.request<{ merged?: boolean; sha?: string; message?: string }>({
+      method: "PUT",
+      path: `/repos/${owner}/${repo}/pulls/${number}/merge`,
+      body: { merge_method: mergeMethod },
+    });
+    if (r.ok && r.data.merged) return { merged: true, sha: r.data.sha || "" };
+    return {
+      merged: false,
+      status: r.status,
+      message: (r.data as { message?: string })?.message || `Merge HTTP ${r.status}`,
+      errors: ((r.data as { errors?: Array<{ message: string }> }).errors) || undefined,
+    };
   }
 }
 
