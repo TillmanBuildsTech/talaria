@@ -53,6 +53,10 @@ export type Conversation = {
   messageCount?: number;
   model?: string | null;
   sessions?: Record<string, string>;
+  // Project scope (P9): the workspace this conversation belongs to. null (or
+  // absent) means the global/unassigned scope. Scoped conversations are
+  // filtered out when a specific project is active.
+  projectId?: string | null;
 };
 
 export type Setting = {
@@ -60,11 +64,26 @@ export type Setting = {
   value: string;
 };
 
+// A Project is a self-contained workspace (P9): its own board, PO agent,
+// tasks, chats, and docs. id is an opaque UUID; the global/unassigned scope
+// is represented by `projectId: null` on scoped rows (no table row exists for
+// it — it is a reserved, non-deletable default).
+export type Project = {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string;
+  color?: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
 type HermesChatDB = Dexie & {
   agents: EntityTable<Agent, "name">;
   messages: EntityTable<ChatMessage, "id">;
   conversations: EntityTable<Conversation, "id">;
   settings: EntityTable<Setting, "key">;
+  projects: EntityTable<Project, "id">;
 };
 
 const db = new Dexie("HermesChatDB") as HermesChatDB;
@@ -76,6 +95,13 @@ db.version(1).stores({
 // v2: add the agents (contacts) table. Dexie keeps unchanged stores as-is.
 db.version(2).stores({
   agents: "name, displayName, color, sort",
+});
+// v3: add the projects (workspaces) table and a nullable projectId scope on
+// conversations (P9). Conversations is re-declared to add the projectId index;
+// unchanged rows are migrated as-is.
+db.version(3).stores({
+  conversations: "++id, title, lastMessage, updatedAt, projectId",
+  projects: "id, slug, name, createdAt",
 });
 
 // Default agents seeded from the Hermes profiles on this host. Users can add /

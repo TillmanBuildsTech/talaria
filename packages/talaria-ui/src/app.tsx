@@ -2,9 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { ChatInput } from "./components/chat-input";
 import { ChatMessage } from "./components/chat-message";
 import { ConnectionBanner } from "./components/connection-banner";
+import { ProjectPicker } from "./components/project-picker";
 import { SettingsModal } from "./components/settings-modal";
 import { Sidebar } from "./components/sidebar";
 import { useChatStore } from "./stores/chat";
+import { useProjectsStore } from "./stores/projects";
 
 function fmtTokens(n: number | null | undefined): string {
   if (n == null) return "—";
@@ -122,12 +124,33 @@ export function App() {
     store.sendMessage(text);
   }
 
+  // Initialize the projects store alongside chat on first mount.
+  const projectsInit = useProjectsStore((s) => s.init);
+  const activeProjectId = useProjectsStore((s) => s.activeProjectId);
+  const reloadForScope = useChatStore((s) => s.reloadForScope);
+
+  useEffect(() => {
+    (async () => {
+      await projectsInit();
+    })();
+    // biome-ignore lint/correctness/useExhaustiveDependencies: init once on mount
+  }, []);
+
+  // Switching project scope swaps the whole view/data namespace (P9): re-query
+  // the chat store against the new scope whenever the active project changes.
+  useEffect(() => {
+    reloadForScope();
+    // biome-ignore lint/correctness/useExhaustiveDependencies: deliberate reload on scope change
+  }, [activeProjectId]);
+
   return (
     <div className="flex flex-col h-dvh bg-slate-900 text-slate-100 overflow-hidden">
       <ConnectionBanner />
 
       {/* Top bar */}
       <header className="flex items-center gap-2 px-4 py-3 border-b border-slate-800 shrink-0">
+        {/* Project scope picker */}
+        <ProjectPicker />
         <button
           type="button"
           onClick={() => setShowSidebar((v) => !v)}
