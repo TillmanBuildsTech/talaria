@@ -112,6 +112,60 @@ export type CommitMeta = {
 };
 
 // ---------------------------------------------------------------------------
+// Code editor (M3) payloads — Contents + git trees API.
+// ---------------------------------------------------------------------------
+
+// GET /repos/{o}/{r}/git/trees/{ref}?recursive=1 — one node of the recursive tree.
+export type GitTreeNode = {
+  path: string;
+  mode: string;
+  type: "blob" | "tree" | "commit";
+  sha: string;
+  size?: number;
+  url?: string;
+};
+
+export type GitTree = {
+  sha: string;
+  tree: Array<GitTreeNode>;
+  truncated: boolean;
+};
+
+// GET /repos/{o}/{r}/contents/{path} — a file entry on a branch. `content` is
+// base64-encoded by GitHub; `sha` is the blob sha an edit must be saved against.
+export type RepoContentFile = {
+  name: string;
+  path: string;
+  sha: string;
+  size: number;
+  encoding: string; // "base64"
+  content?: string;
+  download_url: string | null;
+};
+
+// PUT /repos/{o}/{r}/contents/{path} — the commit GitHub creates on save.
+export type SaveFileResult = {
+  commit: { sha: string; html_url?: string; message?: string };
+  content?: RepoContentFile;
+};
+
+// UTF-8-safe base64 helpers. `btoa`/`atob` choke on non-Latin-1, so encode via
+// UTF-8 bytes first (matches how GitHub base64-encodes file contents).
+export function encodeBase64(text: string): string {
+  const bytes = new TextEncoder().encode(text);
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin);
+}
+
+export function decodeBase64(encoded: string): string {
+  const bin = atob(encoded);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+
+// ---------------------------------------------------------------------------
 // Direct transport (desktop / Tauri) — native HTTP, no CORS.
 // ---------------------------------------------------------------------------
 
@@ -859,6 +913,77 @@ export class GitHubClient {
       createdAt: w.created_at || "",
       updatedAt: w.updated_at || "",
     };
+  }
+
+  // -------------------------------------------------------------------------
+  // Code editor (M3) — Contents + git trees API. Desktop-only capability, but
+  // the service methods ride the same transport abstraction (direct on
+  // desktop, gateway on web) so the editor backend is uniform and testable.
+  // -------------------------------------------------------------------------
+
+  // GET /repos/{o}/{r}/git/trees/{ref}?recursive=1 — full file tree of a
+  // branch. GitHub accepts a branch name in place of a tree sha. Only blobs
+  // (files) are returned to the caller; the recursive tree includes dirs.
+  async listFiles(owner: string, repo: string, branch: string): Promise<Array<GitTreeNode>> {
+    const r = await this.request<GitTree>({
+      method: "GET",
+      path: `/repos/${owner}/${repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`,
+    });
+    if (!r.ok) {
+      const msg = (r.data as unknown as { message?: string })?.message || `HTTP ${r.status}`;
+      throw new Error(msg);
+    }
+    return (r.data.tree || []).filter((n) => n.type === "blob");
+  }
+
+  // GET /repos/{o}/{r}/contents/{path}?ref={branch} — a file's content on a
+  // branch. GitHub returns the content base64-encoded; we decode to text and
+  // also expose the blob sha so an edit can be saved against it (avoiding a
+  // stale-write 409 on the Contents API).
+  async getFileContent(owner: string, repo: string, branch: string, path: string): Promise<{ content: string; sha: string }> {
+    const r = await this.request<RepoContentFile>({
+      method: "GET",
+      path: `/repos/${owner}/${repo}/contents/${path}?ref=${encodeURIComponent(branch)}`,
+    });
+    if (!r.ok) {
+      const msg = (r.data as unknown as { message?: string })?.message || `HTTP ${r.status}`;
+      throw new Error(msg);
+    }
+    if (!r.data.content) {
+      throw new Error(`Empty or binary file: ${path}`);
+    }
+    return { content: decodeBase64(r.data.content), sha: r.data.sha };
+  }
+
+  // PUT /repos/{o}/{r}/contents/{path} — create/update a file on a branch.
+  // Passing the current blob sha turns the write into an update that GitHub
+  // commits directly to the given branch (the "save to a branch" flow). The
+  // result's commit is a linkable artifact (P3).
+  async saveFileToBranch(
+    owner: string,
+    repo: string,
+    branch: string,
+    path: string,
+    content: string,
+    message: string,
+    sha?: string
+  ): Promise<SaveFileResult> {
+    const body: Record<string, unknown> = {
+      message,
+      content: encodeBase64(content),
+      branch,
+    };
+    if (sha) body.sha = sha;
+    const r = await this.request<SaveFileResult>({
+      method: "PUT",
+      path: `/repos/${owner}/${repo}/contents/${path}`,
+      body,
+    });
+    if (!r.ok) {
+      const msg = (r.data as unknown as { message?: string })?.message || `HTTP ${r.status}`;
+      throw new Error(msg);
+    }
+    return r.data;
   }
 }
 

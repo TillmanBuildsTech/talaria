@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ChatInput } from "./components/chat-input";
 import { ChatMessage } from "./components/chat-message";
+import { CodeEditor } from "./components/code-editor";
 import { ConnectionBanner } from "./components/connection-banner";
 import { Deployments } from "./components/deployments";
 import { NavRail, type NavModuleId } from "./components/nav-rail";
@@ -320,6 +321,10 @@ export function App() {
         ) : module === "command-center" ? (
           <div className="flex-1 min-h-0">
             <KanbanBoard />
+          </div>
+        ) : module === "editor" ? (
+          <div className="flex-1 min-h-0">
+            <CodeEditor />
           </div>
         ) : module === "settings" ? (
           <SettingsPage onClose={() => setModule("chat")} />

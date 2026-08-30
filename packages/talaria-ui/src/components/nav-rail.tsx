@@ -112,7 +112,7 @@ const DEFAULT_ENTRIES: Array<NavEntry> = [
   { id: "deployments", label: "Deployments", icon: <DeployIcon /> },
   { id: "observability", label: "Observability", icon: <ActivityIcon /> },
   { id: "docs", label: "Docs", icon: <DocIcon /> },
-  { id: "editor", label: "Editor", icon: <EditorIcon />, disabled: true, note: "desktop only" },
+  { id: "editor", label: "Editor", icon: <EditorIcon /> },
   { id: "settings", label: "Settings", icon: <SettingsIcon /> },
 ];
 
