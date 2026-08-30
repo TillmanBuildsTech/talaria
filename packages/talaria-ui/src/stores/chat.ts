@@ -3,6 +3,7 @@ import db, { type Agent, type ChatMessage, type Conversation } from "../db";
 import { KNOWN_MODELS, type ModelInfo, knownWindowFor } from "../models";
 import { createConnectionMonitor, hermesClient } from "../services/hermes";
 import { useProjectsStore } from "./projects";
+import { useObservabilityStore } from "./observability";
 
 const DEFAULT_CONTEXT_WINDOW = 128_000;
 
@@ -951,6 +952,24 @@ async function streamTo(
         updatedAt: Date.now(),
       });
       await get().recountMessageCount(conversationId);
+    }
+    // Observability (M1): surface a live activity event for this agent turn so
+    // the feed/timeline streams real agent work as it happens. Scoped to the
+    // conversation's project (P9). Chat replies are intent, not artifacts (P3),
+    // so no artifact is attached — the UI renders them as unverified claims.
+    if (agentName) {
+      useObservabilityStore
+        .getState()
+        .record({
+          agent: agentName,
+          projectId: conv.projectId ?? null,
+          kind: "action",
+          action: "replied to a message",
+          summary: (updated?.content || "").slice(0, 200),
+          status,
+          streamId: `conv-${conversationId}`,
+        })
+        .catch(() => {});
     }
   };
 

@@ -10,6 +10,7 @@ export type NavModuleId =
   | "repos"
   | "prs"
   | "deployments"
+  | "observability"
   | "docs"
   | "editor"
   | "settings";
@@ -95,12 +96,21 @@ function SettingsIcon() {
   );
 }
 
+function ActivityIcon() {
+  return (
+    <svg className={baseIcon} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+    </svg>
+  );
+}
+
 const DEFAULT_ENTRIES: Array<NavEntry> = [
   { id: "chat", label: "Chat", icon: <ChatIcon /> },
   { id: "command-center", label: "Command Center", icon: <BoardIcon />, disabled: true, note: "coming soon" },
   { id: "repos", label: "Repos", icon: <RepoIcon /> },
   { id: "prs", label: "Pull Requests", icon: <PrIcon /> },
   { id: "deployments", label: "Deployments", icon: <DeployIcon /> },
+  { id: "observability", label: "Observability", icon: <ActivityIcon /> },
   { id: "docs", label: "Docs", icon: <DocIcon />, disabled: true, note: "coming soon" },
   { id: "editor", label: "Editor", icon: <EditorIcon />, disabled: true, note: "desktop only" },
   { id: "settings", label: "Settings", icon: <SettingsIcon /> },
