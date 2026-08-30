@@ -236,6 +236,123 @@ export class GatewayGitHubTransport implements GitHubTransport {
 }
 
 // ---------------------------------------------------------------------------
+// CI status types (workflow-spec §7) — checks/runs surfaced per branch and PR.
+// ---------------------------------------------------------------------------
+
+// A check run on a commit (pull-request checks / required status checks). The
+// `name` is what shows up as a required-check context on a protected branch.
+export type CheckRun = {
+  id: number;
+  name: string;
+  status: CheckRunStatus; // queued | in_progress | completed | ...
+  conclusion: CheckConclusion | null; // success | failure | neutral | cancelled | skipped | ...
+  headSha: string;
+  htmlUrl: string; // linkable back to GitHub (P3)
+  appName?: string | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
+};
+
+export type CheckRunStatus =
+  | "queued"
+  | "in_progress"
+  | "completed"
+  | "requested"
+  | "waiting"
+  | "pending";
+
+export type CheckConclusion =
+  | "success"
+  | "failure"
+  | "neutral"
+  | "cancelled"
+  | "skipped"
+  | "timed_out"
+  | "action_required"
+  | "stale"
+  | "startup_failure";
+
+// A GitHub Actions workflow run on a branch/ref.
+export type WorkflowRun = {
+  id: number;
+  name: string; // workflow file name (e.g. "CI")
+  displayTitle: string;
+  status: "queued" | "in_progress" | "completed" | "requested" | "waiting" | "pending";
+  conclusion: string | null; // success | failure | cancelled | skipped | ...
+  headSha: string;
+  headBranch: string;
+  runNumber: number;
+  event: string; // pull_request | push | workflow_dispatch | ...
+  htmlUrl: string; // linkable back to GitHub (P3)
+  createdAt: string;
+  updatedAt: string;
+};
+
+// A compact per-PR/ref checks summary used for the P1 "can merge" gate.
+export type ChecksSummary = {
+  total: number;
+  passing: number;
+  failing: number;
+  pending: number; // still in_progress / queued — not yet decided
+  required: Array<string>; // names of required checks
+  requiredPassing: number;
+  requiredTotal: number;
+  canMerge: boolean; // every required check passes (P1)
+  unmetRequired: Array<string>; // required checks not currently passing
+};
+
+// Determine a single per-check outcome for the summary from raw GitHub fields.
+export function checkOutcome(run: Pick<CheckRun, "status" | "conclusion">): "pass" | "fail" | "pending" {
+  if (run.conclusion === "success") return "pass";
+  if (run.conclusion === "neutral" || run.conclusion === "skipped") return "pass";
+  if (run.status === "completed") return "fail"; // completed but not success → failure
+  return "pending";
+}
+
+// Build the gate summary from a set of check runs and the list of required
+// check names. Pure function — easy to unit-test (P1 mirroring logic).
+export function summarizeChecks(runs: Array<CheckRun>, required: Array<string>): ChecksSummary {
+  const requiredSet = new Set(required);
+  let passing = 0;
+  let failing = 0;
+  let pending = 0;
+  const requiredStatus = new Map<string, "pass" | "fail" | "pending">();
+  const unmetRequired: Array<string> = [];
+
+  for (const run of runs) {
+    const outcome = checkOutcome(run);
+    if (outcome === "pass") passing++;
+    else if (outcome === "fail") failing++;
+    else pending++;
+    if (requiredSet.has(run.name)) {
+      requiredStatus.set(run.name, outcome);
+    }
+  }
+
+  let requiredPassing = 0;
+  for (const name of required) {
+    const outcome = requiredStatus.get(name);
+    if (outcome === "pass") {
+      requiredPassing++;
+    } else {
+      unmetRequired.push(name);
+    }
+  }
+
+  return {
+    total: runs.length,
+    passing,
+    failing,
+    pending,
+    required,
+    requiredPassing,
+    requiredTotal: required.length,
+    canMerge: required.length > 0 ? unmetRequired.length === 0 : passing === runs.length,
+    unmetRequired,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // GitHubClient — the shared service both shells use.
 // ---------------------------------------------------------------------------
 
@@ -287,6 +404,101 @@ export class GitHubClient {
   // Generic request — used by the repos/PRs/CI/deploys modules (children).
   async request<T>(opts: GitHubRequestOpts): Promise<GitHubResponse<T>> {
     return this.transport.request<T>(opts, this.token);
+  }
+
+  // -------------------------------------------------------------------------
+  // CI status (workflow-spec §7) — checks/runs per branch and PR.
+  // -------------------------------------------------------------------------
+
+  // Check runs for a commit/ref — maps a PR's headSha to its checks.
+  //   GET /repos/{owner}/{repo}/commits/{sha}/check-runs
+  async getCheckRuns(owner: string, repo: string, ref: string): Promise<Array<CheckRun>> {
+    const r = await this.request<{
+      check_runs?: Array<{
+        id: number;
+        name: string;
+        status: CheckRunStatus;
+        conclusion: CheckConclusion | null;
+        head_sha?: string;
+        html_url?: string;
+        app?: { name?: string } | null;
+        started_at?: string | null;
+        completed_at?: string | null;
+      }>;
+    }>({ method: "GET", path: `/repos/${owner}/${repo}/commits/${encodeURIComponent(ref)}/check-runs` });
+    if (!r.ok) {
+      throw new Error(`Failed to load check runs: HTTP ${r.status}`);
+    }
+    const headSha = ref;
+    return (r.data.check_runs || []).map((c) => ({
+      id: c.id,
+      name: c.name,
+      status: c.status,
+      conclusion: c.conclusion,
+      headSha: c.head_sha || headSha,
+      htmlUrl: c.html_url || `https://github.com/${owner}/${repo}/commit/${headSha}/checks`,
+      appName: c.app?.name || null,
+      startedAt: c.started_at ?? null,
+      completedAt: c.completed_at ?? null,
+    }));
+  }
+
+  // Workflow runs on a branch/ref — per-branch CI status.
+  //   GET /repos/{owner}/{repo}/actions/runs?head_sha={sha}&per_page=50
+  // Or by branch:   GET .../actions/runs?branch={branch}
+  async getWorkflowRuns(
+    owner: string,
+    repo: string,
+    opts: { branch?: string; headSha?: string } = {}
+  ): Promise<Array<WorkflowRun>> {
+    const params = new URLSearchParams({ per_page: "50" });
+    if (opts.branch) params.set("branch", opts.branch);
+    if (opts.headSha) params.set("head_sha", opts.headSha);
+    const r = await this.request<{
+      workflow_runs?: Array<{
+        id: number;
+        name: string;
+        display_title?: string;
+        status: WorkflowRun["status"];
+        conclusion: string | null;
+        head_sha?: string;
+        head_branch?: string;
+        run_number?: number;
+        event?: string;
+        html_url?: string;
+        created_at?: string;
+        updated_at?: string;
+      }>;
+    }>({ method: "GET", path: `/repos/${owner}/${repo}/actions/runs?${params.toString()}` });
+    if (!r.ok) {
+      throw new Error(`Failed to load workflow runs: HTTP ${r.status}`);
+    }
+    return (r.data.workflow_runs || []).map((w) => ({
+      id: w.id,
+      name: w.name,
+      displayTitle: w.display_title || w.name,
+      status: w.status,
+      conclusion: w.conclusion,
+      headSha: w.head_sha || opts.headSha || "",
+      headBranch: w.head_branch || opts.branch || "",
+      runNumber: w.run_number || 0,
+      event: w.event || "",
+      htmlUrl: w.html_url || `https://github.com/${owner}/${repo}/actions/runs/${w.id}`,
+      createdAt: w.created_at || "",
+      updatedAt: w.updated_at || "",
+    }));
+  }
+
+  // Convenience: load check runs for a PR head then summarize against required
+  // checks — the P1 "can merge" gate. Returns the summary + raw runs.
+  async checkRunsForPr(
+    owner: string,
+    repo: string,
+    headSha: string,
+    required: Array<string>
+  ): Promise<{ summary: ChecksSummary; runs: Array<CheckRun> }> {
+    const runs = await this.getCheckRuns(owner, repo, headSha);
+    return { summary: summarizeChecks(runs, required), runs };
   }
 }
 

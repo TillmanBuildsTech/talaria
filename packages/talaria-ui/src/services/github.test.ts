@@ -4,6 +4,8 @@ import {
   GatewayGitHubTransport,
   GitHubClient,
   GITHUB_CLIENT_ID,
+  checkOutcome,
+  summarizeChecks,
 } from "./github";
 
 // A minimal fetch mock returning a canned Response-like object.
@@ -148,5 +150,149 @@ describe("GitHubClient", () => {
     const gw = new GatewayGitHubTransport("", null);
     client.setTransport(gw);
     expect(client.transport.kind).toBe("gateway");
+  });
+});
+
+describe("CI status — check-run gate logic (workflow-spec §7, P1)", () => {
+  const check = (
+    id: number,
+    name: string,
+    status: string,
+    conclusion: string | null
+  ): Parameters<typeof import("./github").checkOutcome>[0] & {
+    id: number;
+    name: string;
+    headSha: string;
+    htmlUrl: string;
+  } => ({
+    id,
+    name,
+    status: status as never,
+    conclusion: conclusion as never,
+    headSha: "abc123",
+    htmlUrl: `https://github.com/o/r/checks/${id}`,
+  });
+
+  it("checkOutcome maps success/neutral/skipped → pass", () => {
+    // imported above
+    expect(checkOutcome(check(1, "CI", "completed", "success"))).toBe("pass");
+    expect(checkOutcome(check(2, "CI", "completed", "neutral"))).toBe("pass");
+    expect(checkOutcome(check(3, "CI", "completed", "skipped"))).toBe("pass");
+  });
+
+  it("checkOutcome maps completed-but-not-success → fail, in-flight → pending", () => {
+    // imported above
+    expect(checkOutcome(check(1, "CI", "completed", "failure"))).toBe("fail");
+    expect(checkOutcome(check(2, "CI", "completed", "timed_out"))).toBe("fail");
+    expect(checkOutcome(check(3, "CI", "in_progress", null))).toBe("pending");
+    expect(checkOutcome(check(4, "CI", "queued", null))).toBe("pending");
+  });
+
+  it("summarizeChecks counts passing/failing/pending", () => {
+    // imported above
+    const runs = [
+      check(1, "CI", "completed", "success"),
+      check(2, "CodeQL", "completed", "success"),
+      check(3, "Docker", "completed", "failure"),
+      check(4, "Lint", "in_progress", null),
+    ];
+    const s = summarizeChecks(runs, []);
+    expect(s.total).toBe(4);
+    expect(s.passing).toBe(2);
+    expect(s.failing).toBe(1);
+    expect(s.pending).toBe(1);
+  });
+
+  it("P1 gate: canMerge only when all required checks pass", () => {
+    // imported above
+    const required = ["CI", "CodeQL"];
+
+    // All required pass → mergeable.
+    const good = summarizeChecks(
+      [check(1, "CI", "completed", "success"), check(2, "CodeQL", "completed", "success"), check(3, "Lint", "completed", "failure")],
+      required
+    );
+    expect(good.canMerge).toBe(true);
+    expect(good.requiredPassing).toBe(2);
+    expect(good.unmetRequired).toEqual([]);
+
+    // A required check fails → blocked.
+    const bad = summarizeChecks(
+      [check(1, "CI", "completed", "success"), check(2, "CodeQL", "completed", "failure")],
+      required
+    );
+    expect(bad.canMerge).toBe(false);
+    expect(bad.unmetRequired).toEqual(["CodeQL"]);
+
+    // A required check still running → not mergeable (pending).
+    const pending = summarizeChecks(
+      [check(1, "CI", "completed", "success"), check(2, "CodeQL", "in_progress", null)],
+      required
+    );
+    expect(pending.canMerge).toBe(false);
+    expect(pending.unmetRequired).toEqual(["CodeQL"]);
+  });
+
+  it("P1 gate: no required checks → mergeable when all runs pass", () => {
+    // imported above
+    const s = summarizeChecks([check(1, "CI", "completed", "success")], []);
+    expect(s.canMerge).toBe(true);
+    const withFailure = summarizeChecks([check(1, "CI", "completed", "failure")], []);
+    expect(withFailure.canMerge).toBe(false);
+  });
+
+  it("getCheckRuns maps the check-runs response and hits the right endpoint", async () => {
+    const fetchMock = mockFetch({
+      body: {
+        check_runs: [
+          { id: 1, name: "CI", status: "completed", conclusion: "success", head_sha: "abc", html_url: "https://github.com/o/r/checks/1", app: { name: "GitHub Actions" } },
+          { id: 2, name: "CodeQL", status: "in_progress", conclusion: null, html_url: "https://github.com/o/r/checks/2" },
+        ],
+      },
+    });
+    const client = new GitHubClient(new DirectGitHubTransport(fetchMock));
+    const runs = await client.getCheckRuns("o", "r", "abc123");
+    expect(runs).toHaveLength(2);
+    expect(runs[0].name).toBe("CI");
+    expect(runs[0].conclusion).toBe("success");
+    expect(runs[0].appName).toBe("GitHub Actions");
+    expect(runs[1].status).toBe("in_progress");
+    const [url] = callArgs(fetchMock);
+    expect(url).toBe("https://api.github.com/repos/o/r/commits/abc123/check-runs");
+  });
+
+  it("getWorkflowRuns queries by branch and maps runs", async () => {
+    const fetchMock = mockFetch({
+      body: {
+        workflow_runs: [
+          { id: 10, name: "CI", display_title: "Build & test", status: "completed", conclusion: "success", head_sha: "abc", head_branch: "main", run_number: 42, event: "push", html_url: "https://github.com/o/r/actions/runs/10" },
+        ],
+      },
+    });
+    const client = new GitHubClient(new DirectGitHubTransport(fetchMock));
+    const runs = await client.getWorkflowRuns("o", "r", { branch: "main" });
+    expect(runs).toHaveLength(1);
+    expect(runs[0].displayTitle).toBe("Build & test");
+    expect(runs[0].runNumber).toBe(42);
+    expect(runs[0].event).toBe("push");
+    const [url] = callArgs(fetchMock);
+    expect(url).toContain("/repos/o/r/actions/runs?");
+    expect(url).toContain("branch=main");
+  });
+
+  it("checkRunsForPr ties headSha → checks → gate summary", async () => {
+    const fetchMock = mockFetch({
+      body: {
+        check_runs: [
+          { id: 1, name: "CI", status: "completed", conclusion: "success" },
+          { id: 2, name: "CodeQL", status: "completed", conclusion: "success" },
+        ],
+      },
+    });
+    const client = new GitHubClient(new DirectGitHubTransport(fetchMock));
+    const { summary, runs } = await client.checkRunsForPr("o", "r", "headsha", ["CI", "CodeQL"]);
+    expect(runs).toHaveLength(2);
+    expect(summary.canMerge).toBe(true);
+    expect(summary.requiredPassing).toBe(2);
   });
 });
