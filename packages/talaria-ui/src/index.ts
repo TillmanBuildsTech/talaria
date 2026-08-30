@@ -8,6 +8,8 @@ export { ConnectionBanner } from "./components/connection-banner";
 export { ConversationBadge } from "./components/conversation-badge";
 export { DiffViewer } from "./components/diff-viewer";
 export { GitHubConnect } from "./components/github-connect";
+export { NavRail } from "./components/nav-rail";
+export type { NavEntry, NavModuleId } from "./components/nav-rail";
 export {
   CheckRunRow,
   CiChecksBadge,
