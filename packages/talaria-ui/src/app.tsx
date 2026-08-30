@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { ChatInput } from "./components/chat-input";
 import { ChatMessage } from "./components/chat-message";
 import { ConnectionBanner } from "./components/connection-banner";
+import { Deployments } from "./components/deployments";
+import { NavRail, type NavModuleId } from "./components/nav-rail";
 import { ProjectPicker } from "./components/project-picker";
 import { PrPanel } from "./components/pr-panel";
 import { RepoBrowser } from "./components/repo-browser";
@@ -46,9 +48,8 @@ function useSlidePresence(open: boolean, durationMs = 250) {
 export function App() {
   const store = useChatStore();
   const [showSidebar, setShowSidebar] = useState(false);
+  const [module, setModule] = useState<NavModuleId>("chat");
   const [showSettings, setShowSettings] = useState(false);
-  const [showRepos, setShowRepos] = useState(false);
-  const [showPrs, setShowPrs] = useState(false);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [showModelMenu, setShowModelMenu] = useState(false);
@@ -272,23 +273,6 @@ export function App() {
           </div>
         )}
 
-        <button
-          type="button"
-          onClick={() => setShowRepos((v) => !v)}
-          className={`p-1.5 rounded-lg transition-colors ${showRepos ? "bg-slate-700 text-slate-100" : "hover:bg-slate-800 text-slate-400"}`}
-          aria-label="Repos"
-          title="Repo browser"
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
-            />
-          </svg>
-        </button>
-
         <button type="button" onClick={() => setShowSettings(true)} className="p-1.5 rounded-lg hover:bg-slate-800 transition-colors" aria-label="Settings">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path
@@ -300,20 +284,10 @@ export function App() {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
           </svg>
         </button>
-        <button type="button" onClick={() => setShowPrs((v) => !v)} className="p-1.5 rounded-lg hover:bg-slate-800 transition-colors" aria-label="Pull Requests">
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M6 15a3 3 0 100-6 3 3 0 000 6zm12 0a3 3 0 100-6 3 3 0 000 6zM6 15v2a3 3 0 003 3h6"
-            />
-          </svg>
-        </button>
       </header>
 
       {/* Context-size indicator (bar turns amber → red as the chat fills the model window) */}
-      {!showRepos && activeConversationId && activeContextTokens > 0 && (
+      {module === "chat" && activeConversationId && activeContextTokens > 0 && (
         <div className="px-4 py-1.5 flex items-center gap-2 border-b border-slate-800 bg-slate-900/70">
           <span className="text-[10px] uppercase tracking-wider text-slate-500 shrink-0">context</span>
           <div className="flex-1 h-1 rounded-full bg-slate-800 overflow-hidden">
@@ -325,44 +299,69 @@ export function App() {
         </div>
       )}
 
-      {/* Repo browser module (M2) */}
-      {showRepos ? (
-        <RepoBrowser />
-      ) : showPrs ? (
-        <div className="flex-1 min-h-0">
-          <PrPanel onClose={() => setShowPrs(false)} />
-        </div>
-      ) : (
-        <>
-          {/* Chat area */}
-          <div ref={chatContainer} className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
-            {/* Empty state */}
-            {messages.length === 0 && (
-              <div className="flex flex-col items-center justify-center h-full text-slate-500 gap-3">
-                <svg className="w-12 h-12 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={1.5}
-                    d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"
-                  />
-                </svg>
-                <p className="text-sm">Send a message to start chatting. Open the sidebar to message an agent directly or start a group.</p>
-              </div>
-            )}
+      {/* Body: left nav rail + active module */}
+      <div className="flex flex-1 min-h-0">
+        <NavRail
+          active={module}
+          onSelect={(id) => {
+            // Settings is a modal on this branch (SettingsModal), not a rail module.
+            if (id === "settings") {
+              setShowSettings(true);
+              return;
+            }
+            setModule(id);
+          }}
+        />
 
-            {messages.map((msg) => (
-              <ChatMessage key={msg.id} message={msg} onRetry={() => store.retryMessage(msg.id as number)} />
-            ))}
-
-            {/* Auto-scroll anchor */}
-            <div ref={scrollAnchor} />
+        {module === "repos" ? (
+          <div className="flex-1 min-h-0">
+            <RepoBrowser />
           </div>
+        ) : module === "prs" ? (
+          <div className="flex-1 min-h-0">
+            <PrPanel onClose={() => setModule("chat")} />
+          </div>
+        ) : module === "deployments" ? (
+          <div className="flex-1 min-h-0">
+            <Deployments owner="tillmanbuildstech" repo="talaria" project={activeProjectId} />
+          </div>
+        ) : module === "chat" ? (
+          <div className="flex-1 min-h-0 flex flex-col">
+            {/* Chat area */}
+            <div ref={chatContainer} className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+              {/* Empty state */}
+              {messages.length === 0 && (
+                <div className="flex flex-col items-center justify-center h-full text-slate-500 gap-3">
+                  <svg className="w-12 h-12 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={1.5}
+                      d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"
+                    />
+                  </svg>
+                  <p className="text-sm">Send a message to start chatting. Open the sidebar to message an agent directly or start a group.</p>
+                </div>
+              )}
 
-          {/* Input */}
-          <ChatInput onSend={handleSend} onStop={() => store.stopStreaming()} />
-        </>
-      )}
+              {messages.map((msg) => (
+                <ChatMessage key={msg.id} message={msg} onRetry={() => store.retryMessage(msg.id as number)} />
+              ))}
+
+              {/* Auto-scroll anchor */}
+              <div ref={scrollAnchor} />
+            </div>
+
+            {/* Input */}
+            <ChatInput onSend={handleSend} onStop={() => store.stopStreaming()} />
+          </div>
+        ) : (
+          /* Coming-soon modules (command-center, docs, editor) render a placeholder */
+          <div className="flex-1 min-h-0 flex items-center justify-center text-slate-500">
+            <p className="text-sm">This module is coming soon.</p>
+          </div>
+        )}
+      </div>
 
       {/* Sidebar overlay */}
       {sidebar.mounted && (
