@@ -1,0 +1,97 @@
+name: Release
+
+# Cut a versioned GitHub release for the shipped PWA (apps/pwa is the canonical
+# versioned artifact). Triggers on merge to main (post-merge) or manually.
+#
+# Delivery model (mirrors serv):
+#   dev  = tests-only CI (integration branch, safe to auto-run)
+#   dev -> release = RC (prerelease.yml on the release branch)
+#   release -> main = public release (this workflow)
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      should_release: ${{ steps.check.outputs.should_release }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version (apps/pwa)
+        id: version
+        run: |
+          v=$(node -p "require('./apps/pwa/package.json').version")
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Check if tag already exists
+        id: check
+        run: |
+          if git ls-remote --tags origin | grep -q "refs/tags/v${{ steps.version.outputs.version }}$"; then
+            echo "::warning::v${{ steps.version.outputs.version }} already released. Bump apps/pwa/package.json before the next main merge."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: check
+    if: needs.check.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Enable Corepack (pnpm)
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm -r --if-present build
+
+      - name: Package PWA build
+        run: |
+          cd apps/pwa
+          tar -czf /tmp/talaria-pwa.tar.gz dist
+          ls -la /tmp/talaria-pwa.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: talaria-pwa
+          path: /tmp/talaria-pwa.tar.gz
+
+  release:
+    needs: [check, build]
+    if: needs.check.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: talaria-pwa
+          path: out
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.check.outputs.version }}
+          name: v${{ needs.check.outputs.version }}
+          files: out/talaria-pwa.tar.gz
+          generate_release_notes: true
