@@ -103,7 +103,7 @@ export type { MergeEligibility, RepoGates, RequiredCheckResult, ReviewState } fr
 export type { ChatState, ConnectionStatus, SlashCommand } from "./stores/chat";
 export { useChatStore } from "./stores/chat";
 export type { DeviceFlowState, GitHubState } from "./stores/github";
-export { useGitHubStore } from "./stores/github";
+export { useGitHubStore, setDesktopFetchImpl } from "./stores/github";
 export type { ProjectInput, ProjectsState } from "./stores/projects";
 export { useProjectsStore } from "./stores/projects";
 export type { PrDetail, PrsState } from "./stores/prs";
