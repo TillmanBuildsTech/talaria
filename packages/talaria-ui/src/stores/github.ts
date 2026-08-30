@@ -1,5 +1,9 @@
 import { create } from "zustand";
-import db, { type GitHubConnection, type GitHubConnectionType } from "../db";
+import db, {
+  type Deployment,
+  type GitHubConnection,
+  type GitHubConnectionType,
+} from "../db";
 import { hermesClient } from "../services/hermes";
 import {
   DirectGitHubTransport,
@@ -8,6 +12,7 @@ import {
   type CheckRun,
   type ChecksSummary,
   type DeviceFlowHandle,
+  type WorkflowMeta,
   type WorkflowRun,
 } from "../services/github";
 
@@ -56,6 +61,21 @@ export type GitHubState = {
     headSha: string,
     required: Array<string>
   ) => Promise<{ summary: ChecksSummary; runs: Array<CheckRun> }>;
+
+  // Deployments (workflow-spec §8) — dispatchable workflows, trigger, watch.
+  deployments: Array<Deployment>;
+  listDispatchableWorkflows: (owner: string, repo: string) => Promise<Array<WorkflowMeta>>;
+  loadDeployments: (project: string | null) => Promise<void>;
+  dispatchDeployment: (opts: {
+    owner: string;
+    repo: string;
+    workflowId: number;
+    workflowName: string;
+    ref: string;
+    inputs?: Record<string, string>;
+    project: string | null;
+  }) => Promise<Deployment>;
+  refreshDeployment: (dep: Deployment) => Promise<Deployment>;
 };
 
 // Web keeps only an opaque token_ref (the gateway holds the token); desktop
@@ -66,6 +86,7 @@ export const useGitHubStore = create<GitHubState>((set, get) => ({
   connections: [],
   deviceFlow: { active: false, handle: null, error: null, polling: false },
   platform: isDesktop() ? "desktop" : "web",
+  deployments: [],
 
   async init() {
     // Configure the transport for this shell.
@@ -244,5 +265,124 @@ export const useGitHubStore = create<GitHubState>((set, get) => ({
     const token = await get().activeToken();
     if (get().platform === "desktop" && token) githubClient.setToken(token);
     return githubClient.checkRunsForPr(owner, repo, headSha, required);
+  },
+
+  // ── Deployments (workflow-spec §8) ────────────────────────────────────────
+  // Live GitHub API for the trigger and every status poll (never a stale cache
+  // for a dispatch, P1); Dexie only caches completed runs for offline reads.
+
+  // Ensure the active connection's token is loaded, then list dispatchable
+  // workflows for a repo. Returns only `active` (dispatchable) workflows.
+  async listDispatchableWorkflows(owner, repo) {
+    const token = await get().activeToken();
+    if (get().platform === "desktop" && token) githubClient.setToken(token);
+    const all = await githubClient.listWorkflows(owner, repo);
+    return githubClient.listDispatchableWorkflows(all);
+  },
+
+  // Load cached deployments for a project scope (P9) — offline-read friendly.
+  async loadDeployments(project) {
+    let rows: Array<Deployment>;
+    if (project) {
+      rows = await db.deployments.where("project").equals(project).sortBy("triggeredAt");
+    } else {
+      rows = await db.deployments.toArray();
+      rows.sort((a, b) => b.triggeredAt - a.triggeredAt);
+    }
+    set({ deployments: rows.reverse() }); // newest first
+  },
+
+  // Trigger a workflow_dispatch deployment and start watching it. Returns the
+  // freshly-persisted Deployment so the caller can render + poll it.
+  async dispatchDeployment({ owner, repo, workflowId, workflowName, ref, inputs, project }) {
+    const token = await get().activeToken();
+    if (get().platform === "desktop" && token) githubClient.setToken(token);
+    const repoId = `${owner}/${repo}`;
+    const now = Date.now();
+    // Optimistic row before the dispatch resolves — runId 0, url to the
+    // workflow page. Upserted with the real run once the run appears.
+    const optimistic: Deployment = {
+      id: `${repoId}:0`,
+      repoId,
+      owner,
+      repo,
+      runId: 0,
+      workflow: workflowName,
+      workflowDisplay: workflowName,
+      ref,
+      inputs: inputs || {},
+      headSha: "",
+      status: "queued",
+      conclusion: null,
+      triggeredAt: now,
+      url: `https://github.com/${repoId}/actions/workflows`,
+      project,
+    };
+    await db.deployments.put(optimistic);
+
+    // Fire the dispatch — GitHub returns 204 with no body and no run id, so we
+    // watch for the run it creates by listing runs on the ref.
+    await githubClient.dispatchWorkflow(owner, repo, workflowId, { ref, inputs });
+
+    // Poll (a few quick tries) for the run this dispatch created: the newest
+    // workflow_dispatch run on the ref with the matching workflow name.
+    let run: WorkflowRun | null = null;
+    for (let i = 0; i < 10 && !run; i++) {
+      const runs = await githubClient.getWorkflowRuns(owner, repo, { branch: ref });
+      run =
+        runs.find((r) => r.event === "workflow_dispatch" && r.name === workflowName) ||
+        null;
+      if (!run) {
+        // Sleep ~1.5s between polls (GitHub propagates the run asynchronously).
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+    }
+
+    const deployment: Deployment = run
+      ? {
+          id: `${repoId}:${run.id}`,
+          repoId,
+          owner,
+          repo,
+          runId: run.id,
+          workflow: workflowName,
+          workflowDisplay: run.displayTitle || workflowName,
+          ref: run.headBranch || ref,
+          inputs: inputs || {},
+          headSha: run.headSha,
+          status: run.status === "completed" ? "completed" : "in_progress",
+          conclusion: run.conclusion,
+          triggeredAt: now,
+          url: run.htmlUrl,
+          project,
+        }
+      : optimistic;
+
+    await db.deployments.put(deployment);
+    await db.deployments.delete(`${repoId}:0`).catch(() => {});
+    await get().loadDeployments(project);
+    return deployment;
+  },
+
+  // Watch a single deployment: fetch its live workflow run, persist the
+  // updated status/conclusion, and return the refreshed row.
+  async refreshDeployment(dep) {
+    const token = await get().activeToken();
+    if (get().platform === "desktop" && token) githubClient.setToken(token);
+    if (!dep.runId) return dep;
+    const run = await githubClient.getWorkflowRun(dep.owner, dep.repo, dep.runId);
+    const updated: Deployment = {
+      ...dep,
+      runId: run.id,
+      workflowDisplay: run.displayTitle || dep.workflowDisplay,
+      headSha: run.headSha || dep.headSha,
+      status: run.status === "completed" ? "completed" : "in_progress",
+      conclusion: run.conclusion,
+      url: run.htmlUrl,
+      updated: Date.now(),
+    } as Deployment;
+    await db.deployments.put(updated);
+    await get().loadDeployments(dep.project);
+    return updated;
   },
 }));

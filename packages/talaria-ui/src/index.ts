@@ -15,6 +15,7 @@ export {
   CiStatusPanel,
   CiWorkflowRuns,
 } from "./components/ci-status";
+export { Deployments, DeploymentList, deploymentOutcome, deploymentStatusText } from "./components/deployments";
 export { PrPanel } from "./components/pr-panel";
 export { ProjectPicker } from "./components/project-picker";
 export { PullRequestDetail } from "./components/pull-request-detail";
@@ -23,7 +24,7 @@ export { RepoBrowser } from "./components/repo-browser";
 export { RepoPicker } from "./components/repo-picker";
 export { SettingsModal } from "./components/settings-modal";
 export { Sidebar } from "./components/sidebar";
-export type { Agent, CachedPullRequest, CachedRepo, CachedRepoGates, ChatMessage as ChatMessageRecord, Conversation, ConversationKind, GitHubConnection, GitHubConnectionStatus, GitHubConnectionType, MessageStatus, Project, Repo, Setting } from "./db";
+export type { Agent, CachedPullRequest, CachedRepo, CachedRepoGates, ChatMessage as ChatMessageRecord, Conversation, ConversationKind, Deployment, DeploymentStatus, GitHubConnection, GitHubConnectionStatus, GitHubConnectionType, MessageStatus, Project, Repo, Setting } from "./db";
 export { default as db } from "./db";
 export { KNOWN_MODELS, knownWindowFor } from "./models";
 export type { ModelInfo } from "./models";
@@ -60,6 +61,7 @@ export type {
   PullRequestFile,
   PullRequestReview,
   ReviewEvent,
+  WorkflowMeta,
   WorkflowRun,
 } from "./services/github";
 export {
