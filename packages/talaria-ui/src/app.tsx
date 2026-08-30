@@ -4,14 +4,16 @@ import { ChatMessage } from "./components/chat-message";
 import { ConnectionBanner } from "./components/connection-banner";
 import { Deployments } from "./components/deployments";
 import { NavRail, type NavModuleId } from "./components/nav-rail";
-import { ProjectPicker } from "./components/project-picker";
+import { Observability } from "./components/observability";
 import { PrPanel } from "./components/pr-panel";
+import { ProjectPicker } from "./components/project-picker";
 import { RepoBrowser } from "./components/repo-browser";
 import { SettingsPage } from "./components/settings-page";
 import { Sidebar } from "./components/sidebar";
 import { useChatStore } from "./stores/chat";
 import { useGitHubStore } from "./stores/github";
 import { useProjectsStore } from "./stores/projects";
+import { useObservabilityStore } from "./stores/observability";
 
 function fmtTokens(n: number | null | undefined): string {
   if (n == null) return "—";
@@ -121,6 +123,7 @@ export function App() {
     (async () => {
       await store.init();
       await useGitHubStore.getState().init();
+      await useObservabilityStore.getState().init();
       scrollToBottom();
     })();
     // biome-ignore lint/correctness/useExhaustiveDependencies: init once on mount, matching the Vue onMounted hook
@@ -289,6 +292,10 @@ export function App() {
       {/* Body: left nav rail + active module */}
       <div className="flex flex-1 min-h-0">
         <NavRail active={module} onSelect={setModule} />
+        ) : module === "observability" ? (
+          <div className="flex-1 min-h-0">
+            <Observability />
+          </div>
 
         {module === "repos" ? (
           <div className="flex-1 min-h-0">

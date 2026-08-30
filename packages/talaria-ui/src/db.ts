@@ -10,6 +10,12 @@
 //                   a group holds two+, a default holds none (routes to the
 //                   gateway's default profile).
 //   settings      — key/value (baseUrl, apiKey).
+//   connections   — GitHub connections (M2 auth, spec §3.4).
+//   projects      — per-project workspaces (P9).
+//   repos         — cached repo metadata, scoped per project (M2 repo browser).
+//   activity      — agent observability events (M1): every agent action + tool
+//                   call, scoped per project (P9) and optionally per kanban
+//                   task. The live feed + timelines replay from here (P5).
 import Dexie, { type EntityTable } from "dexie";
 
 export type Agent = {
@@ -180,6 +186,55 @@ export type Deployment = {
   project: string | null; // P9 scope — active project id, or null = global
 };
 
+// ── Agent observability (M1) ─────────────────────────────────────────────
+// An activity event records one agent action or tool call for the live feed
+// and per-agent/task timelines. `kind` distinguishes high-level actions from
+// tool invocations; `artifact` carries the verifiable proof (P3) when the
+// action produced one (branch/commit/PR/CI/deploy). `reviewVerdict` records
+// the human gate outcome once a diff is reviewed.
+export type ActivityKind = "action" | "tool" | "artifact" | "review";
+export type ActivityStatus = "running" | "done" | "failed";
+export type ReviewVerdict = "approved" | "changes" | "rejected";
+
+// A linkable, verifiable artifact (P3): a concrete outcome that can be checked
+// outside the agent's own report. `url` is the link back to the source of
+// truth (GitHub commit/PR/run, deployment, etc.).
+export type Artifact = {
+  kind: "branch" | "commit" | "pr" | "ci" | "deploy";
+  title: string;
+  url?: string;
+  ref?: string; // branch name / sha / run id
+};
+
+export type ActivityEvent = {
+  id?: number;
+  // Which agent (Hermes profile) performed the action.
+  agent: string;
+  // Project scope (P9): null = global/unassigned.
+  projectId: string | null;
+  // Optional kanban task scope this activity belongs to.
+  taskId?: string | null;
+  kind: ActivityKind;
+  // Short action label shown in the feed ("opened PR", "ran tests", "pushed").
+  action: string;
+  // Tool name for kind === "tool" (e.g. "terminal", "read_file").
+  tool?: string;
+  // Human-readable summary / what the agent said it did.
+  summary?: string;
+  // Raw tool output / log where useful (test output, build logs).
+  output?: string;
+  // Diff to review (kind === "review" or attached to an artifact action).
+  diff?: string | null;
+  status: ActivityStatus;
+  // Verifiable proof (P3). A "done" claim is only trusted when present.
+  artifact?: Artifact | null;
+  // Human gate outcome (P2), set via diff review.
+  reviewVerdict?: ReviewVerdict | null;
+  createdAt: number;
+  // Opaque id of the stream/turn this event belongs to (grouping, replay).
+  streamId?: string;
+};
+
 type HermesChatDB = Dexie & {
   agents: EntityTable<Agent, "name">;
   messages: EntityTable<ChatMessage, "id">;
@@ -192,6 +247,7 @@ type HermesChatDB = Dexie & {
   pullRequests: EntityTable<CachedPullRequest, "id">;
   repoGates: EntityTable<CachedRepoGates, "fullName">;
   deployments: EntityTable<Deployment, "id">;
+  activity: EntityTable<ActivityEvent, "id">;
 };
 
 const db = new Dexie("HermesChatDB") as HermesChatDB;
@@ -228,6 +284,13 @@ db.version(5).stores({
 // tagged by project scope (P9). Idempotent upsert by `${repoId}:${runId}`.
 db.version(6).stores({
   deployments: "id, repoId, runId, status, project, triggeredAt",
+});
+// v7: add the agent observability activity table (M1). Indexed by agent,
+// project scope, task scope, and createdAt so the live feed + per-agent /
+// per-task timelines query efficiently. `id` auto-increments (insert order =
+// chronological feed order).
+db.version(7).stores({
+  activity: "++id, agent, projectId, taskId, kind, createdAt, streamId",
 });
 
 // Default agents seeded from the Hermes profiles on this host. Users can add /
