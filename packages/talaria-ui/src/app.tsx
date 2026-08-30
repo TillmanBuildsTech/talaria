@@ -5,6 +5,7 @@ import { ConnectionBanner } from "./components/connection-banner";
 import { SettingsModal } from "./components/settings-modal";
 import { Sidebar } from "./components/sidebar";
 import { useChatStore } from "./stores/chat";
+import { useGitHubStore } from "./stores/github";
 
 function fmtTokens(n: number | null | undefined): string {
   if (n == null) return "—";
@@ -113,6 +114,7 @@ export function App() {
   useEffect(() => {
     (async () => {
       await store.init();
+      await useGitHubStore.getState().init();
       scrollToBottom();
     })();
     // biome-ignore lint/correctness/useExhaustiveDependencies: init once on mount, matching the Vue onMounted hook

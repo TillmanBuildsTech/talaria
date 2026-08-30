@@ -3,6 +3,7 @@ import db from "../db";
 import type { Agent } from "../db";
 import { useChatStore } from "../stores/chat";
 import { AgentAvatar } from "./agent-avatar";
+import { GitHubConnect } from "./github-connect";
 
 type SettingsModalProps = {
   onClose: () => void;
@@ -153,6 +154,9 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
               </button>
             ))}
           </div>
+
+          {/* GitHub connection (M2 auth — device flow + PAT fallback) */}
+          <GitHubConnect />
 
           {/* Agents (profile contacts) */}
           <div className="pt-1">

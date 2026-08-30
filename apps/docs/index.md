@@ -26,6 +26,7 @@ we spec and argue here before writing code.
 | [`agent-observability.md`](agent-observability.md) | **Trust & transparency.** Seeing what every agent is actually doing, and reviewing/approving their work. |
 | [`projects.md`](projects.md) | **Per-project workspaces.** Each project has its own board, PO, tasks, chats, and markdown docs (stored on Hermes). |
 | [`architecture.md`](architecture.md) | **How it's built.** One shared frontend on web + desktop, connected to the Hermes gateway and kanban engine. |
+| [`workflow-spec.md`](workflow-spec.md) | **M2 implementation spec.** GitHub connection (device flow + PAT), repos, PRs, CI, deployments — the auth decision and module contracts. |
 | [`roadmap.md`](roadmap.md) | **The plan.** What ships next (the MVP command center) and the path beyond. |
 
 ## Reading order

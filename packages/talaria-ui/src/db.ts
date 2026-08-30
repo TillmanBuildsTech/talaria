@@ -60,11 +60,31 @@ export type Setting = {
   value: string;
 };
 
+// GitHub connection (auth) — one row per connected GitHub account, keyed by
+// the GitHub login. Mirrors the M2 spec §3.4. `tokenRef` is an opaque key that
+// locates the stored token — a Dexie settings key on desktop (local), or a
+// gateway-store key on web — never the raw token itself (P5: local-first).
+export type GitHubConnectionType = "device" | "pat";
+export type GitHubConnectionStatus = "connected" | "reconnecting" | "revoked";
+
+export type GitHubConnection = {
+  id: string; // GitHub owner login
+  owner: string;
+  type: GitHubConnectionType;
+  status: GitHubConnectionStatus;
+  scopes: Array<string>;
+  tokenRef: string;
+  gatewayOrigin: string;
+  lastVerifiedAt: number;
+  connectedAt: number;
+};
+
 type HermesChatDB = Dexie & {
   agents: EntityTable<Agent, "name">;
   messages: EntityTable<ChatMessage, "id">;
   conversations: EntityTable<Conversation, "id">;
   settings: EntityTable<Setting, "key">;
+  connections: EntityTable<GitHubConnection, "id">;
 };
 
 const db = new Dexie("HermesChatDB") as HermesChatDB;
@@ -76,6 +96,10 @@ db.version(1).stores({
 // v2: add the agents (contacts) table. Dexie keeps unchanged stores as-is.
 db.version(2).stores({
   agents: "name, displayName, color, sort",
+});
+// v3: add the GitHub connections table (M2 auth, spec §3.4).
+db.version(3).stores({
+  connections: "id, owner, type, status",
 });
 
 // Default agents seeded from the Hermes profiles on this host. Users can add /
