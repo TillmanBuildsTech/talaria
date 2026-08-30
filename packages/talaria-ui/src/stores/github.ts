@@ -5,7 +5,10 @@ import {
   DirectGitHubTransport,
   GatewayGitHubTransport,
   githubClient,
+  type CheckRun,
+  type ChecksSummary,
   type DeviceFlowHandle,
+  type WorkflowRun,
 } from "../services/github";
 
 // Detect the desktop (Tauri) shell at runtime. The desktop shell does the
@@ -42,6 +45,17 @@ export type GitHubState = {
   // Token lifecycle
   disconnect: (owner: string) => Promise<void>;
   markReconnecting: (owner: string) => Promise<void>;
+
+  // CI status (workflow-spec §7)
+  activeToken: () => Promise<string | null>;
+  fetchCheckRuns: (owner: string, repo: string, ref: string) => Promise<Array<CheckRun>>;
+  fetchWorkflowRuns: (owner: string, repo: string, branch: string) => Promise<Array<WorkflowRun>>;
+  checkRunsForPr: (
+    owner: string,
+    repo: string,
+    headSha: string,
+    required: Array<string>
+  ) => Promise<{ summary: ChecksSummary; runs: Array<CheckRun> }>;
 };
 
 // Web keeps only an opaque token_ref (the gateway holds the token); desktop
@@ -195,5 +209,40 @@ export const useGitHubStore = create<GitHubState>((set, get) => ({
   async markReconnecting(owner) {
     await db.connections.update(owner, { status: "reconnecting" });
     await get().loadConnections();
+  },
+
+  // CI status (workflow-spec §7) — every call hits the live GitHub API via the
+  // configured transport (never a stale cache for gates, P1). Ensure the active
+  // connection's stored token is loaded onto the client (direct transport)
+  // before each call so the request authenticates, even after a reload.
+  async activeToken(): Promise<string | null> {
+    const conns = get().connections;
+    if (conns.length === 0) return githubClient.token;
+    // Prefer the most recently connected account.
+    const active = conns.reduce((a, b) => (b.lastVerifiedAt > a.lastVerifiedAt ? b : a));
+    if (get().platform === "desktop") {
+      const stored = await db.settings.get(active.tokenRef);
+      return stored?.value ?? githubClient.token;
+    }
+    // Web: gateway holds the token; client.token may already be a ref.
+    return githubClient.token;
+  },
+
+  async fetchCheckRuns(owner, repo, ref) {
+    const token = await get().activeToken();
+    if (get().platform === "desktop" && token) githubClient.setToken(token);
+    return githubClient.getCheckRuns(owner, repo, ref);
+  },
+
+  async fetchWorkflowRuns(owner, repo, branch) {
+    const token = await get().activeToken();
+    if (get().platform === "desktop" && token) githubClient.setToken(token);
+    return githubClient.getWorkflowRuns(owner, repo, { branch });
+  },
+
+  async checkRunsForPr(owner, repo, headSha, required) {
+    const token = await get().activeToken();
+    if (get().platform === "desktop" && token) githubClient.setToken(token);
+    return githubClient.checkRunsForPr(owner, repo, headSha, required);
   },
 }));

@@ -7,6 +7,13 @@ export { ChatMessage } from "./components/chat-message";
 export { ConnectionBanner } from "./components/connection-banner";
 export { ConversationBadge } from "./components/conversation-badge";
 export { GitHubConnect } from "./components/github-connect";
+export {
+  CheckRunRow,
+  CiChecksBadge,
+  CiChecksList,
+  CiStatusPanel,
+  CiWorkflowRuns,
+} from "./components/ci-status";
 export { SettingsModal } from "./components/settings-modal";
 export { Sidebar } from "./components/sidebar";
 export type { Agent, ChatMessage as ChatMessageRecord, Conversation, ConversationKind, GitHubConnection, GitHubConnectionStatus, GitHubConnectionType, MessageStatus, Setting } from "./db";
@@ -21,15 +28,22 @@ export {
   GitHubClient,
   GITHUB_CLIENT_ID,
   GITHUB_DEVICE_SCOPE,
+  checkOutcome,
   githubClient,
+  summarizeChecks,
 } from "./services/github";
 export type {
+  CheckConclusion,
+  CheckRun,
+  CheckRunStatus,
+  ChecksSummary,
   DeviceFlowHandle,
   DevicePollResult,
   GitHubRequestOpts,
   GitHubResponse,
   GitHubTransport,
   GitHubTransportKind,
+  WorkflowRun,
 } from "./services/github";
 export type { ChatState, ConnectionStatus, SlashCommand } from "./stores/chat";
 export { useChatStore } from "./stores/chat";
