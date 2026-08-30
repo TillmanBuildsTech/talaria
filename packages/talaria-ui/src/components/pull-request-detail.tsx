@@ -44,7 +44,7 @@ export function PullRequestDetail({ owner, repo, number, onBack }: PullRequestDe
   const methods: Array<{ value: MergeMethod; label: string }> = [{ value: defaultMethod, label: defaultMethod }];
   const seen = new Set<MergeMethod>([defaultMethod]);
   for (const m of ["squash", "merge", "rebase"] as MergeMethod[]) {
-    const permitted = m === "merge" ? gates.allowMergeCommit : m === "rebase" ? gates.allowRebaseMerge : true;
+    const permitted = m === "merge" ? gates.allowMergeCommit : m === "rebase" ? gates.allowRebaseMerge : gates.allowSquash;
     if (!seen.has(m) && permitted) {
       methods.push({ value: m, label: m });
       seen.add(m);

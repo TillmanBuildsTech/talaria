@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   allowGreen,
+  allowedMergeMethods,
   approvingReviewCount,
   canMergePullRequest,
   defaultMergeMethod,
@@ -100,6 +101,33 @@ describe("deriveRepoGates — the repo's real gates are discovered, not assumed 
     );
     expect(g.branchProtected).toBe(true);
     expect(g.squashOnly).toBe(false);
+  });
+
+  it("surfaces allowSquash from repo.allow_squash_merge (S2 regression)", () => {
+    expect(deriveRepoGates(protection({}, 404), repo()).allowSquash).toBe(true);
+    expect(deriveRepoGates(protection({}, 404), repo({ allow_squash_merge: false })).allowSquash).toBe(false);
+  });
+});
+
+describe("allowedMergeMethods — squash only when allow_squash_merge (S2 regression)", () => {
+  it("merge-commit-only repo does NOT offer squash", () => {
+    const g = deriveRepoGates(protection({}, 404), repo({ allow_squash_merge: false, allow_merge_commit: true, allow_rebase_merge: false }));
+    expect(allowedMergeMethods(g)).toEqual(["merge"]);
+  });
+
+  it("squash-only repo offers only squash", () => {
+    const g = deriveRepoGates(protection({}, 404), repo());
+    expect(allowedMergeMethods(g)).toEqual(["squash"]);
+  });
+
+  it("no permitted method => empty list (dead guard now live)", () => {
+    const g = deriveRepoGates(protection({}, 404), repo({ allow_squash_merge: false, allow_merge_commit: false, allow_rebase_merge: false }));
+    expect(allowedMergeMethods(g)).toEqual([]);
+  });
+
+  it("merge+rebase, no squash => both offered, no squash", () => {
+    const g = deriveRepoGates(protection({}, 404), repo({ allow_squash_merge: false, allow_merge_commit: true, allow_rebase_merge: true }));
+    expect(allowedMergeMethods(g)).toEqual(["merge", "rebase"]);
   });
 });
 
@@ -233,6 +261,22 @@ describe("canMergePullRequest — the P1 decision (portal never more/less permis
     });
     expect(e.mergeable).toBe(true);
     expect(e.reasons).toEqual([]);
+  });
+
+  it("protected repo with NO permitted merge method disables merge (dead guard now live, S2)", () => {
+    const noMethod = deriveRepoGates(
+      protection({ required_status_checks: { contexts: ["ci"] } }),
+      repo({ allow_squash_merge: false, allow_merge_commit: false, allow_rebase_merge: false })
+    );
+    const e = canMergePullRequest({
+      gates: noMethod,
+      pr: pr(),
+      status: { state: "success", statuses: [{ context: "ci", state: "success" }] },
+      reviewState: "approved",
+      reviewCount: 1,
+    });
+    expect(e.mergeable).toBe(false);
+    expect(e.reasons).toContain("Repo has no permitted merge method");
   });
 
   it("two-required-reviewer repo stays gated until both approve", () => {
