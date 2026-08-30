@@ -24,7 +24,7 @@ export { PullRequestDetail } from "./components/pull-request-detail";
 export { PullRequestList } from "./components/pull-request-list";
 export { RepoBrowser } from "./components/repo-browser";
 export { RepoPicker } from "./components/repo-picker";
-export { SettingsModal } from "./components/settings-modal";
+export { SettingsPage } from "./components/settings-page";
 export { Sidebar } from "./components/sidebar";
 export type { Agent, CachedPullRequest, CachedRepo, CachedRepoGates, ChatMessage as ChatMessageRecord, Conversation, ConversationKind, Deployment, DeploymentStatus, GitHubConnection, GitHubConnectionStatus, GitHubConnectionType, MessageStatus, Project, Repo, Setting } from "./db";
 export { default as db } from "./db";
