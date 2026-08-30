@@ -118,7 +118,13 @@ export type CommitMeta = {
 export class DirectGitHubTransport implements GitHubTransport {
   readonly kind: "direct" = "direct";
 
-  constructor(private fetchImpl: typeof fetch = fetch) {}
+  // `fetch` must be bound: it's called as `this.fetchImpl(...)`, and an unbound
+  // reference to window.fetch throws "Can only call Window.fetch on instances
+  // of Window". Default is a bound global fetch so callers that omit fetchImpl
+  // (the normal path) don't hit this.
+  constructor(
+    private fetchImpl: typeof fetch = fetch.bind(globalThis as typeof globalThis & Window)
+  ) {}
 
   async startDeviceFlow(clientId: string): Promise<DeviceFlowHandle> {
     const body = new URLSearchParams({
@@ -213,7 +219,7 @@ export class GatewayGitHubTransport implements GitHubTransport {
   constructor(
     public origin: string,
     public apiKey: string | null,
-    private fetchImpl: typeof fetch = fetch
+    private fetchImpl: typeof fetch = fetch.bind(globalThis as typeof globalThis & Window)
   ) {}
 
   private async gatewayPost<T>(path: string, body: unknown): Promise<GitHubResponse<T>> {

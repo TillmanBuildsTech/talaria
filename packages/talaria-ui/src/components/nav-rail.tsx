@@ -11,7 +11,8 @@ export type NavModuleId =
   | "prs"
   | "deployments"
   | "docs"
-  | "editor";
+  | "editor"
+  | "settings";
 
 export type NavEntry = {
   id: NavModuleId;
@@ -80,6 +81,20 @@ function EditorIcon() {
   );
 }
 
+function SettingsIcon() {
+  return (
+    <svg className={baseIcon} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+        d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+      />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+    </svg>
+  );
+}
+
 const DEFAULT_ENTRIES: Array<NavEntry> = [
   { id: "chat", label: "Chat", icon: <ChatIcon /> },
   { id: "command-center", label: "Command Center", icon: <BoardIcon />, disabled: true, note: "coming soon" },
@@ -88,6 +103,7 @@ const DEFAULT_ENTRIES: Array<NavEntry> = [
   { id: "deployments", label: "Deployments", icon: <DeployIcon /> },
   { id: "docs", label: "Docs", icon: <DocIcon />, disabled: true, note: "coming soon" },
   { id: "editor", label: "Editor", icon: <EditorIcon />, disabled: true, note: "desktop only" },
+  { id: "settings", label: "Settings", icon: <SettingsIcon /> },
 ];
 
 export function NavRail({
