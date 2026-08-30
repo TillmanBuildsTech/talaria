@@ -23,6 +23,18 @@ function isDesktop(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+// Desktop-native fetch injection point. The Tauri webview's own `fetch()`
+// cannot reach github.com (no CORS headers), which surfaces as "Load failed"
+// on the GitHub device-flow login. The desktop shell injects the Tauri HTTP
+// plugin's native fetch here at startup; `init()` then uses it for the direct
+// transport so requests go through Rust (no webview CORS). The shared package
+// stays agnostic — it just calls the injected impl if present.
+let desktopFetchImpl: typeof fetch | null = null;
+
+export function setDesktopFetchImpl(fn: typeof fetch): void {
+  desktopFetchImpl = fn;
+}
+
 export type DeviceFlowState = {
   active: boolean;
   handle: DeviceFlowHandle | null;
@@ -91,7 +103,12 @@ export const useGitHubStore = create<GitHubState>((set, get) => ({
   async init() {
     // Configure the transport for this shell.
     if (get().platform === "desktop") {
-      githubClient.setTransport(new DirectGitHubTransport());
+      // Use the Tauri HTTP plugin's native fetch (injected by the desktop
+      // shell) so GitHub device-flow calls bypass webview CORS. Falls back to
+      // the bound global fetch if nothing was injected (tests / non-Tauri).
+      githubClient.setTransport(
+        new DirectGitHubTransport(desktopFetchImpl ?? undefined)
+      );
     } else {
       githubClient.setTransport(
         new GatewayGitHubTransport(hermesClient.gatewayRoot(), hermesClient.apiKey)

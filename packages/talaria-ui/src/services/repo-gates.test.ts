@@ -167,6 +167,47 @@ describe("resolveRequiredChecks — a required check is never pre-approvable (P1
     const g = deriveRepoGates(protection({}, 404), repo());
     expect(resolveRequiredChecks(g, status("success"))).toEqual([]);
   });
+
+  it("S1: resolves an Actions required check from check runs even when legacy status is empty", () => {
+    const g = deriveRepoGates(protection({ required_status_checks: { contexts: ["Build & test"] } }), repo());
+    const emptyLegacy = { state: "pending", statuses: [] }; // live GitHub reality for Actions
+    const runs = [{ id: 1, name: "Build & test", status: "completed", conclusion: "success", headSha: "abc123", htmlUrl: "https://github.com/o/r/checks/1" }];
+    const r = resolveRequiredChecks(g, emptyLegacy, runs);
+    expect(r).toEqual([{ context: "Build & test", state: "success", satisfied: true }]);
+  });
+
+  it("S1: a passing check run enables merge even though legacy /status is empty", () => {
+    const g = deriveRepoGates(
+      protection({ required_status_checks: { contexts: ["Build & test"] }, required_pull_request_reviews: { required_approving_review_count: 1 } }),
+      repo()
+    );
+    const emptyLegacy = { state: "pending", statuses: [] };
+    const runs = [{ id: 1, name: "Build & test", status: "completed", conclusion: "success", headSha: "abc123", htmlUrl: "https://github.com/o/r/checks/1" }];
+    const e = canMergePullRequest({ gates: g, pr: pr(), status: emptyLegacy, runs, reviewState: "approved", reviewCount: 1 });
+    expect(e.mergeable).toBe(true);
+    expect(e.reasons).toEqual([]);
+  });
+
+  it("S1: a failing check run gates merge (not more permissive)", () => {
+    const g = deriveRepoGates(protection({ required_status_checks: { contexts: ["Build & test"] } }), repo());
+    const runs = [{ id: 1, name: "Build & test", status: "completed", conclusion: "failure", headSha: "abc123", htmlUrl: "https://github.com/o/r/checks/1" }];
+    const r = resolveRequiredChecks(g, { state: "failure", statuses: [] }, runs);
+    expect(r).toEqual([{ context: "Build & test", state: "failure", satisfied: false }]);
+  });
+
+  it("S1: an in-progress check run is pending, not satisfied", () => {
+    const g = deriveRepoGates(protection({ required_status_checks: { contexts: ["Build & test"] } }), repo());
+    const runs = [{ id: 1, name: "Build & test", status: "in_progress", conclusion: null, headSha: "abc123", htmlUrl: "https://github.com/o/r/checks/1" }];
+    const r = resolveRequiredChecks(g, { state: "pending", statuses: [] }, runs);
+    expect(r).toEqual([{ context: "Build & test", state: "pending", satisfied: false }]);
+  });
+
+  it("S1: legacy status contexts still resolve when no check run matches (no regression)", () => {
+    const g = deriveRepoGates(protection({ required_status_checks: { contexts: ["ci"] } }), repo());
+    const runs = [{ id: 1, name: "Build & test", status: "completed", conclusion: "success", headSha: "abc123", htmlUrl: "https://github.com/o/r/checks/1" }];
+    const r = resolveRequiredChecks(g, { state: "success", statuses: [{ context: "ci", state: "success" }] }, runs);
+    expect(r).toEqual([{ context: "ci", state: "success", satisfied: true }]);
+  });
 });
 
 describe("canMergePullRequest — the P1 decision (portal never more/less permissive)", () => {

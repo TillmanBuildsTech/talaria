@@ -13,9 +13,11 @@ import { createServer, request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import { readFile, readdir } from 'node:fs/promises'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { extname, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { dirname } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const DIST = join(__dirname, 'dist')
@@ -193,6 +195,207 @@ async function serveConfig(res) {
   res.end(body)
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// Kanban bridge — reads the REAL Hermes kanban board (per-project SQLite) so
+// the Command Center renders live dispatcher state, never a forked board.
+//   GET  /kanban-api/board?board=<slug>         → full board grouped by column
+//   GET  /kanban-api/tasks/:id?board=<slug>     → task detail (deps, comments,
+//                                                 runs, attachments)
+//   POST /kanban-api/tasks/:id/archive          → archive a task (zombie-kill)
+//   POST /kanban-api/tasks/:id/unblock          → unblock a stale-blocked task
+//
+// Board resolution mirrors hermes_cli.kanban_db: the default board lives at
+// <home>/kanban.db; named boards (one per project, keyed by project slug) live
+// at <home>/kanban/boards/<slug>/kanban.db. Reads go straight to SQLite (fast,
+// WAL-safe); writes shell the `hermes kanban` CLI so mutations share the exact
+// code path as the dispatcher/CLI — no drift between surfaces.
+// ───────────────────────────────────────────────────────────────────────────
+
+const KANBAN_BOARD_SLUG_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/
+
+// Resolve the shared kanban home the way hermes_cli.kanban_db does: the board
+// is shared across profiles, so a HERMES_HOME pointing at a profile dir
+// (…/profiles/<name>) anchors to the parent root, not the profile subdir.
+function kanbanHome() {
+  const home = process.env.HERMES_HOME || ''
+  const m = home.match(/^(.+)\/profiles\/[^/]+\/?$/)
+  return (m ? m[1] : home) || HERMES_HOME
+}
+
+function kanbanBoardPath(board) {
+  // board: project slug, "default", or "" (empty = default board).
+  const slug = (board || '').trim().toLowerCase()
+  if (slug === '' || slug === 'default') return join(kanbanHome(), 'kanban.db')
+  if (!KANBAN_BOARD_SLUG_RE.test(slug)) throw new Error(`invalid board slug: ${slug}`)
+  return join(kanbanHome(), 'kanban', 'boards', slug, 'kanban.db')
+}
+
+function openBoard(board) {
+  const path = kanbanBoardPath(board)
+  if (!existsSync(path)) return null // project with no board yet → empty board
+  return new DatabaseSync(path, { readOnly: true })
+}
+
+const BOARD_COLUMNS = ['triage', 'todo', 'scheduled', 'ready', 'running', 'blocked', 'review', 'done']
+
+function rowTaskDict(row) {
+  // Surface the fields the Command Center card + detail need; body stays short
+  // on the board (full body comes from /kanban-api/tasks/:id).
+  return {
+    id: row.id,
+    title: row.title,
+    status: row.status,
+    priority: row.priority ?? 0,
+    assignee: row.assignee ?? null,
+    created_by: row.created_by ?? null,
+    created_at: row.created_at ?? null,
+    started_at: row.started_at ?? null,
+    completed_at: row.completed_at ?? null,
+    body: row.body ?? null,
+    branch_name: row.branch_name ?? null,
+    workspace_kind: row.workspace_kind ?? null,
+    workspace_path: row.workspace_path ?? null,
+    model_override: row.model_override ?? null,
+    project_id: row.project_id ?? null,
+    block_kind: row.block_kind ?? null,
+  }
+}
+
+// Read the REAL board for a project slug. Returns { board, columns } where
+// columns maps each status name to its task cards. Falls back to an empty
+// board when the project has no DB yet (so the UI shows a clean "no board").
+function readBoard(board) {
+  const db = openBoard(board)
+  const columns = {}
+  for (const c of BOARD_COLUMNS) columns[c] = []
+  if (!db) return { board: board || 'default', columns, exists: false }
+  try {
+    const tasks = db.prepare(
+      `SELECT id,title,body,status,priority,assignee,created_by,created_at,started_at,completed_at,
+              branch_name,workspace_kind,workspace_path,model_override,project_id,block_kind
+         FROM tasks WHERE status != 'archived' ORDER BY priority DESC, created_at ASC`
+    ).all()
+    // Link + comment counts (one pass each).
+    const linkCounts = {}
+    for (const r of db.prepare('SELECT parent_id, child_id FROM task_links').all()) {
+      linkCounts[r.parent_id] ??= { parents: 0, children: 0 }
+      linkCounts[r.parent_id].children++
+      linkCounts[r.child_id] ??= { parents: 0, children: 0 }
+      linkCounts[r.child_id].parents++
+    }
+    const commentCounts = {}
+    for (const r of db.prepare('SELECT task_id, COUNT(*) AS n FROM task_comments GROUP BY task_id').all()) {
+      commentCounts[r.task_id] = r.n
+    }
+    const runs = db.prepare(
+      `SELECT r.task_id, r.summary, r.outcome, r.status, r.ended_at
+         FROM task_runs r
+         JOIN (SELECT task_id, MAX(id) AS mid FROM task_runs GROUP BY task_id) m
+           ON m.mid = r.id`
+    ).all()
+    const latestSummary = {}
+    for (const r of runs) if (r.summary) latestSummary[r.task_id] = r.summary
+
+    for (const t of tasks) {
+      const d = rowTaskDict(t)
+      d.link_counts = linkCounts[t.id] || { parents: 0, children: 0 }
+      d.comment_count = commentCounts[t.id] || 0
+      d.latest_summary = latestSummary[t.id] || null
+      const col = d.status in columns ? d.status : 'todo'
+      columns[col].push(d)
+    }
+    return { board: board || 'default', columns, exists: true }
+  } finally {
+    db.close()
+  }
+}
+
+// Full task detail: deps, comments, runs, attachments, plus the task row.
+function readTask(board, taskId) {
+  const db = openBoard(board)
+  if (!db) return null
+  try {
+    const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId)
+    if (!task) return null
+    const parents = db.prepare('SELECT parent_id AS id FROM task_links WHERE child_id = ? ORDER BY parent_id').all(taskId).map(r => r.id)
+    const children = db.prepare('SELECT child_id AS id FROM task_links WHERE parent_id = ? ORDER BY child_id').all(taskId).map(r => r.id)
+    const comments = db.prepare('SELECT id, author, body, created_at FROM task_comments WHERE task_id = ? ORDER BY created_at').all(taskId)
+    const runs = db.prepare(
+      `SELECT id, profile, status, outcome, summary, metadata, error, started_at, ended_at, worker_pid
+         FROM task_runs WHERE task_id = ? ORDER BY id`
+    ).all(taskId)
+    const attachments = db.prepare(
+      `SELECT id, filename, content_type, size, uploaded_by, created_at, stored_path
+         FROM task_attachments WHERE task_id = ? ORDER BY created_at`
+    ).all(taskId)
+    return { task: rowTaskDict(task), parents, children, comments, runs, attachments }
+  } finally {
+    db.close()
+  }
+}
+
+// Writes shell the CLI so mutations share the dispatcher/CLI code path.
+function runKanbanCli(board, args) {
+  const cmd = ['kanban']
+  const slug = (board || '').trim().toLowerCase()
+  if (slug && slug !== 'default') cmd.push('--board', slug)
+  cmd.push(...args)
+  try {
+    const out = execFileSync('hermes', cmd, { encoding: 'utf8', timeout: 30000 })
+    return { ok: true, out }
+  } catch (err) {
+    return { ok: false, error: String(err.stderr || err.message || err) }
+  }
+}
+
+function sendJson(res, status, obj) {
+  res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+  res.end(JSON.stringify(obj))
+}
+
+async function serveKanban(req, res, url) {
+  const method = req.method
+  const pathname = url.pathname
+  const board = url.searchParams.get('board') || ''
+
+  // GET /kanban-api/board
+  if (method === 'GET' && pathname === '/kanban-api/board') {
+    try {
+      sendJson(res, 200, readBoard(board))
+    } catch (err) {
+      sendJson(res, 400, { error: err.message })
+    }
+    return
+  }
+
+  // GET /kanban-api/tasks/:id  |  POST /kanban-api/tasks/:id/{archive,unblock}
+  const m = pathname.match(/^\/kanban-api\/tasks\/([^/]+)(?:\/(archive|unblock))?$/)
+  if (m) {
+    const taskId = decodeURIComponent(m[1])
+    const action = m[2]
+    if (method === 'GET' && !action) {
+      try {
+        const detail = readTask(board, taskId)
+        if (!detail) return sendJson(res, 404, { error: `task ${taskId} not found` })
+        return sendJson(res, 200, detail)
+      } catch (err) {
+        return sendJson(res, 500, { error: err.message })
+      }
+    }
+    if (method === 'POST' && action === 'archive') {
+      const result = runKanbanCli(board, ['archive', taskId])
+      return sendJson(res, result.ok ? 200 : 502, result)
+    }
+    if (method === 'POST' && action === 'unblock') {
+      const result = runKanbanCli(board, ['unblock', taskId])
+      return sendJson(res, result.ok ? 200 : 502, result)
+    }
+    return sendJson(res, 405, { error: 'method not allowed' })
+  }
+
+  return sendJson(res, 404, { error: 'not found' })
+}
+
 // Forward a gateway-path request upstream, dropping browser origins the
 // gateway rejects. A leading "/api/v1" (the pre-sync app path) is rewritten to
 // "/v1" for backward compat with service-worker-cached bundles.
@@ -231,6 +434,16 @@ createServer(async (req, res) => {
     // 0) Local config endpoint: real per-profile API keys for auto-provisioning
     if (url.pathname === '/talaria-config') {
       await serveConfig(res)
+      return
+    }
+
+    // 0.5) Kanban bridge — live Hermes board reads + hygiene writes
+    if (url.pathname === '/kanban-api/board' || url.pathname.startsWith('/kanban-api/tasks/')) {
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204).end()
+        return
+      }
+      await serveKanban(req, res, url)
       return
     }
 

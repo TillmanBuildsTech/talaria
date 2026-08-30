@@ -5,6 +5,8 @@ import {
   GitHubClient,
   GITHUB_CLIENT_ID,
   checkOutcome,
+  decodeBase64,
+  encodeBase64,
   summarizeChecks,
 } from "./github";
 
@@ -425,5 +427,76 @@ describe("Deployments — workflow_dispatch (workflow-spec §8)", () => {
     expect(run.headBranch).toBe("main");
     const [url] = callArgs(fetchMock);
     expect(url).toBe("https://api.github.com/repos/o/r/actions/runs/99");
+  });
+});
+
+describe("GitHubClient code editor (M3)", () => {
+  it("lists the blob files of a branch from the recursive git tree", async () => {
+    const fetchMock = mockFetch({
+      body: {
+        sha: "tree-1",
+        truncated: false,
+        tree: [
+          { path: "src", mode: "040000", type: "tree", sha: "t1" },
+          { path: "src/app.tsx", mode: "100644", type: "blob", sha: "b1", size: 12 },
+          { path: "README.md", mode: "100644", type: "blob", sha: "b2", size: 40 },
+        ],
+      },
+    });
+    const client = new GitHubClient(new DirectGitHubTransport(fetchMock));
+    const files = await client.listFiles("tillmanbuildstech", "talaria", "main");
+    expect(files).toHaveLength(2);
+    expect(files.map((f) => f.path)).toEqual(["src/app.tsx", "README.md"]);
+    const [url] = callArgs(fetchMock);
+    expect(url).toContain("/repos/tillmanbuildstech/talaria/git/trees/main?recursive=1");
+  });
+
+  it("reads and base64-decodes a file's content on a branch", async () => {
+    const source = "export const x = 1;\n";
+    const fetchMock = mockFetch({
+      body: {
+        name: "app.tsx",
+        path: "src/app.tsx",
+        sha: "blob-abc",
+        size: source.length,
+        encoding: "base64",
+        content: encodeBase64(source),
+        download_url: null,
+      },
+    });
+    const client = new GitHubClient(new DirectGitHubTransport(fetchMock));
+    const { content, sha } = await client.getFileContent("tillmanbuildstech", "talaria", "main", "src/app.tsx");
+    expect(content).toBe(source);
+    expect(sha).toBe("blob-abc");
+    const [url] = callArgs(fetchMock);
+    expect(url).toContain("/repos/tillmanbuildstech/talaria/contents/src/app.tsx?ref=main");
+  });
+
+  it("throws when a file is empty or binary", async () => {
+    const fetchMock = mockFetch({ body: { path: "x.bin", sha: "b", size: 1, encoding: "base64", content: "" } });
+    const client = new GitHubClient(new DirectGitHubTransport(fetchMock));
+    await expect(client.getFileContent("o", "r", "main", "x.bin")).rejects.toThrow(/Empty or binary/);
+  });
+
+  it("saves edited content back to a branch via the Contents API, sending the blob sha", async () => {
+    const fetchMock = mockFetch({
+      body: { commit: { sha: "commit-42", html_url: "https://github.com/o/r/commit/commit-42", message: "Edit" } },
+    });
+    const client = new GitHubClient(new DirectGitHubTransport(fetchMock));
+    const res = await client.saveFileToBranch("o", "r", "feature/x", "src/a.ts", "const a = 2;\n", "Edit a.ts", "blob-old");
+    expect(res.commit.sha).toBe("commit-42");
+    const [url, init] = callArgs(fetchMock);
+    expect(url).toBe("https://api.github.com/repos/o/r/contents/src/a.ts");
+    expect(init.method).toBe("PUT");
+    const body = JSON.parse(String(init.body));
+    expect(body.branch).toBe("feature/x");
+    expect(body.message).toBe("Edit a.ts");
+    expect(body.sha).toBe("blob-old");
+    expect(decodeBase64(body.content)).toBe("const a = 2;\n");
+  });
+
+  it("base64 helpers round-trip UTF-8 text", () => {
+    const text = "héllo — 日本語 ✓";
+    expect(decodeBase64(encodeBase64(text))).toBe(text);
   });
 });

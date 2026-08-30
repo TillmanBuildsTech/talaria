@@ -1,17 +1,23 @@
 import { useEffect, useRef, useState } from "react";
 import { ChatInput } from "./components/chat-input";
 import { ChatMessage } from "./components/chat-message";
+import { CodeEditor } from "./components/code-editor";
 import { ConnectionBanner } from "./components/connection-banner";
 import { Deployments } from "./components/deployments";
 import { NavRail, type NavModuleId } from "./components/nav-rail";
-import { ProjectPicker } from "./components/project-picker";
+import { DocsEditor } from "./components/docs-editor";
+import { Observability } from "./components/observability";
 import { PrPanel } from "./components/pr-panel";
+import { KanbanBoard } from "./components/kanban-board";
+import { ProjectPicker } from "./components/project-picker";
 import { RepoBrowser } from "./components/repo-browser";
 import { SettingsPage } from "./components/settings-page";
 import { Sidebar } from "./components/sidebar";
 import { useChatStore } from "./stores/chat";
 import { useGitHubStore } from "./stores/github";
+import { useDocsStore } from "./stores/docs";
 import { useProjectsStore } from "./stores/projects";
+import { useObservabilityStore } from "./stores/observability";
 
 function fmtTokens(n: number | null | undefined): string {
   if (n == null) return "—";
@@ -121,6 +127,7 @@ export function App() {
     (async () => {
       await store.init();
       await useGitHubStore.getState().init();
+      await useObservabilityStore.getState().init();
       scrollToBottom();
     })();
     // biome-ignore lint/correctness/useExhaustiveDependencies: init once on mount, matching the Vue onMounted hook
@@ -138,6 +145,7 @@ export function App() {
   useEffect(() => {
     (async () => {
       await projectsInit();
+      await useDocsStore.getState().init();
     })();
     // biome-ignore lint/correctness/useExhaustiveDependencies: init once on mount
   }, []);
@@ -150,7 +158,7 @@ export function App() {
   }, [activeProjectId]);
 
   return (
-    <div className="flex flex-col h-dvh bg-slate-900 text-slate-100 overflow-hidden">
+    <div className="flex flex-col h-dvh bg-slate-900 text-slate-100 overflow-hidden relative">
       <ConnectionBanner />
 
       {/* Top bar */}
@@ -305,6 +313,18 @@ export function App() {
           <div className="flex-1 min-h-0">
             <Deployments owner="tillmanbuildstech" repo="talaria" project={activeProjectId} />
           </div>
+        ) : module === "docs" ? (
+          <div className="flex-1 min-h-0">
+            <DocsEditor />
+          </div>
+        ) : module === "command-center" ? (
+          <div className="flex-1 min-h-0">
+            <KanbanBoard />
+          </div>
+        ) : module === "editor" ? (
+          <div className="flex-1 min-h-0">
+            <CodeEditor />
+          </div>
         ) : module === "settings" ? (
           <SettingsPage onClose={() => setModule("chat")} />
         ) : module === "chat" ? (
@@ -338,7 +358,7 @@ export function App() {
             <ChatInput onSend={handleSend} onStop={() => store.stopStreaming()} />
           </div>
         ) : (
-          /* Coming-soon modules (command-center, docs, editor) render a placeholder */
+          /* Coming-soon modules (docs, editor) render a placeholder */
           <div className="flex-1 min-h-0 flex items-center justify-center text-slate-500">
             <p className="text-sm">This module is coming soon.</p>
           </div>

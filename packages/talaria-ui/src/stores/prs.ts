@@ -200,11 +200,17 @@ export const usePrsStore = create<PrsState>((set, get) => ({
         githubClient.getPullRequestFiles(owner, repo, number),
         githubClient.listReviews(owner, repo, number),
       ]);
-      const status = await githubClient.getCommitStatus(owner, repo, pr.head.sha).catch(() => null);
+      const [status, checkRuns] = await Promise.all([
+        githubClient.getCommitStatus(owner, repo, pr.head.sha).catch(() => null),
+        // S1: required checks for Actions jobs live in /commits/{sha}/check-runs,
+        // not the legacy /status endpoint (which is empty for them). Load both
+        // so the merge gate is never more restrictive than GitHub (§6.2).
+        githubClient.getCheckRuns(owner, repo, pr.head.sha).catch(() => []),
+      ]);
       const reviewState = deriveReviewState(reviews);
       const reviewCount = approvingReviewCount(reviews);
-      const requiredCheckResults = resolveRequiredChecks(gates, status);
-      const mergeEligibility = canMergePullRequest({ gates, pr, status, reviewState, reviewCount });
+      const requiredCheckResults = resolveRequiredChecks(gates, status, checkRuns);
+      const mergeEligibility = canMergePullRequest({ gates, pr, status, runs: checkRuns, reviewState, reviewCount });
 
       await db.repoGates.put({
         fullName,
