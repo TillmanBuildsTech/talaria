@@ -1,24 +1,27 @@
 name: CI
 
-# Build + test every PR to main, and gate merges on a version bump. Also runs
-# on push to main (post-merge confidence) without the version gate.
+# Build + test every PR/push to main and dev. Version-bump gate applies ONLY to
+# PRs targeting main (so dev stays a tests-only integration branch, matching
+# the delivery model: dev = tests-only, dev -> release = RC, release -> main =
+# public release).
 on:
   pull_request:
-    branches: [main]
+    branches: [main, dev]
   push:
-    branches: [main]
+    branches: [main, dev]
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # The version-bump gate: the PR head must carry a package.json version
-  # strictly greater than main's, so every merge ships a new version.
+  # The version-bump gate: a PR to MAIN must carry a package.json version
+  # strictly greater than main's, so every release ships a new version.
+  # Runs only when the PR base is main (not dev).
   version-check:
     name: Version bump required
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
     steps:
       - name: Checkout base (main)
         uses: actions/checkout@v4
@@ -30,7 +33,7 @@ jobs:
         with:
           path: head
       - name: Verify version bumped vs main
-        run: node head/scripts/check-version-bump.mjs base/apps/pwa/package.json head/apps/pwa/package.json
+        run: node head/apps/pwa/scripts/check-version-bump.mjs base/apps/pwa/package.json head/apps/pwa/package.json
 
   build-test:
     name: Build & test

@@ -1,0 +1,84 @@
+name: Prerelease
+
+# Produce a release-candidate tag (v<ver>-rc.N) when the `release` branch is
+# pushed. Mirrors the serv model: dev -> release for an RC, release -> main for
+# the public release. RC tags are pre-release GitHub releases.
+on:
+  push:
+    branches: [release]
+  workflow_dispatch:
+
+concurrency:
+  group: prerelease
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      rc_version: ${{ steps.rc.outputs.version }}
+      tag: ${{ steps.rc.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read base version (apps/pwa)
+        id: base
+        run: echo "version=$(node -p "require('./apps/pwa/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Compute next release-candidate number
+        id: rc
+        env:
+          BASE: ${{ steps.base.outputs.version }}
+        run: |
+          last=$(git tag -l "v${BASE}-rc.*" | sed -E "s/^v${BASE}-rc\.//" | sort -n | tail -1)
+          next=$(( ${last:-0} + 1 ))
+          echo "version=${BASE}-rc.${next}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${BASE}-rc.${next}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Enable Corepack (pnpm)
+        run: corepack enable
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        run: pnpm -r --if-present build
+      - name: Package PWA build
+        run: |
+          cd apps/pwa && tar -czf /tmp/talaria-pwa-rc.tar.gz dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: talaria-pwa-rc
+          path: /tmp/talaria-pwa-rc.tar.gz
+
+  release:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: talaria-pwa-rc
+          path: out
+      - name: Create GitHub pre-release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: ${{ needs.version.outputs.tag }}
+          files: out/talaria-pwa-rc.tar.gz
+          prerelease: true
+          generate_release_notes: true
