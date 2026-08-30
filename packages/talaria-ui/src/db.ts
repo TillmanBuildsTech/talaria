@@ -112,6 +112,52 @@ export type Repo = {
   lastFetchedAt: number;
 };
 
+// Offline-read cache for the PR feature (M2 §5 caching rule): PRs and repo
+// gates are cached for offline read; EVERY action (review, merge) always hits
+// the live API and refreshes the cache — the cache is never a source of truth
+// for gates (P1). (Distinct from the repo-browser `repos` table.)
+export type CachedRepo = {
+  fullName: string; // "owner/repo"
+  name: string;
+  owner: string;
+  defaultBranch: string;
+  htmlUrl: string;
+  allowSquashMerge: boolean;
+  allowMergeCommit: boolean;
+  allowRebaseMerge: boolean;
+  updatedAt: number;
+};
+
+export type CachedPullRequest = {
+  id: string; // "owner/repo#number"
+  fullName: string;
+  number: number;
+  title: string;
+  author: string;
+  state: string;
+  merged: boolean;
+  htmlUrl: string;
+  headRef: string;
+  headSha: string;
+  baseRef: string;
+  updatedAt: number;
+  mergeableState?: string | null;
+  draft?: boolean;
+};
+
+export type CachedRepoGates = {
+  fullName: string;
+  defaultBranch: string;
+  branchProtected: boolean;
+  requiredChecks: Array<string>;
+  requiredReviewers: number;
+  enforceAdmins: boolean;
+  squashOnly: boolean;
+  allowMergeCommit: boolean;
+  allowRebaseMerge: boolean;
+  fetchedAt: number;
+};
+
 type HermesChatDB = Dexie & {
   agents: EntityTable<Agent, "name">;
   messages: EntityTable<ChatMessage, "id">;
@@ -120,6 +166,9 @@ type HermesChatDB = Dexie & {
   connections: EntityTable<GitHubConnection, "id">;
   projects: EntityTable<Project, "id">;
   repos: EntityTable<Repo, "id">;
+  prCachedRepos: EntityTable<CachedRepo, "fullName">;
+  pullRequests: EntityTable<CachedPullRequest, "id">;
+  repoGates: EntityTable<CachedRepoGates, "fullName">;
 };
 
 const db = new Dexie("HermesChatDB") as HermesChatDB;
@@ -143,6 +192,14 @@ db.version(3).stores({
 // v4: add the repos cache (M2 repo browser, spec §4.1), scoped per project.
 db.version(4).stores({
   repos: "id, owner, name, project, lastFetchedAt",
+});
+// v5: add the M2 PR offline-read caches — PR repos, pull requests, repo gates.
+// The cache is for offline READ only; merge/review actions always hit the live
+// API. (Distinct table names so they don't collide with the repo-browser repos.)
+db.version(5).stores({
+  prCachedRepos: "fullName, owner, updatedAt",
+  pullRequests: "id, fullName, updatedAt",
+  repoGates: "fullName, fetchedAt",
 });
 
 // Default agents seeded from the Hermes profiles on this host. Users can add /

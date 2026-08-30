@@ -3,6 +3,7 @@ import { ChatInput } from "./components/chat-input";
 import { ChatMessage } from "./components/chat-message";
 import { ConnectionBanner } from "./components/connection-banner";
 import { ProjectPicker } from "./components/project-picker";
+import { PrPanel } from "./components/pr-panel";
 import { RepoBrowser } from "./components/repo-browser";
 import { SettingsModal } from "./components/settings-modal";
 import { Sidebar } from "./components/sidebar";
@@ -47,6 +48,7 @@ export function App() {
   const [showSidebar, setShowSidebar] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showRepos, setShowRepos] = useState(false);
+  const [showPrs, setShowPrs] = useState(false);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [showModelMenu, setShowModelMenu] = useState(false);
@@ -298,6 +300,16 @@ export function App() {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
           </svg>
         </button>
+        <button type="button" onClick={() => setShowPrs((v) => !v)} className="p-1.5 rounded-lg hover:bg-slate-800 transition-colors" aria-label="Pull Requests">
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M6 15a3 3 0 100-6 3 3 0 000 6zm12 0a3 3 0 100-6 3 3 0 000 6zM6 15v2a3 3 0 003 3h6"
+            />
+          </svg>
+        </button>
       </header>
 
       {/* Context-size indicator (bar turns amber → red as the chat fills the model window) */}
@@ -316,6 +328,10 @@ export function App() {
       {/* Repo browser module (M2) */}
       {showRepos ? (
         <RepoBrowser />
+      ) : showPrs ? (
+        <div className="flex-1 min-h-0">
+          <PrPanel onClose={() => setShowPrs(false)} />
+        </div>
       ) : (
         <>
           {/* Chat area */}
