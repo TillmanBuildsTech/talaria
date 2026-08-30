@@ -323,6 +323,16 @@ export type WorkflowRun = {
   updatedAt: string;
 };
 
+// A `workflow_dispatch`-enabled workflow in a repo (workflow-spec §8).
+// `id` is the workflow id used to dispatch; `path` is the .yml path in the repo.
+export type WorkflowMeta = {
+  id: number;
+  name: string;
+  path: string;
+  state: string; // "active" | "disabled_manually" | "disabled_inactivity" | ...
+  htmlUrl: string;
+};
+
 // A compact per-PR/ref checks summary used for the P1 "can merge" gate.
 export type ChecksSummary = {
   total: number;
@@ -743,6 +753,105 @@ export class GitHubClient {
       status: r.status,
       message: (r.data as { message?: string })?.message || `Merge HTTP ${r.status}`,
       errors: ((r.data as { errors?: Array<{ message: string }> }).errors) || undefined,
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // Deployments (workflow-spec §8) — workflow_dispatch trigger + status watch.
+  // -------------------------------------------------------------------------
+
+  // List the `workflow_dispatch`-enabled workflows in a repo, so the UI can
+  // offer only dispatchable ones (§8 Trigger). Also returns dispatchable ones
+  // that are currently active (state === "active").
+  //   GET /repos/{owner}/{repo}/actions/workflows?per_page=100
+  async listWorkflows(owner: string, repo: string): Promise<Array<WorkflowMeta>> {
+    const r = await this.request<{
+      workflows?: Array<{
+        id: number;
+        name: string;
+        path: string;
+        state: string;
+        html_url?: string;
+      }>;
+    }>({ method: "GET", path: `/repos/${owner}/${repo}/actions/workflows?per_page=100` });
+    if (!r.ok) {
+      throw new Error(`Failed to load workflows: HTTP ${r.status}`);
+    }
+    return (r.data.workflows || []).map((w) => ({
+      id: w.id,
+      name: w.name,
+      path: w.path,
+      state: w.state,
+      htmlUrl: w.html_url || `https://github.com/${owner}/${repo}/actions/workflows/${w.id}`,
+    }));
+  }
+
+  // Filter to workflows that can actually be dispatched: GitHub marks a
+  // workflow_dispatch workflow as state "active" only when it's enabled. (A
+  // workflow that lacks `on: workflow_dispatch` never appears here with active
+  // state — GitHub omits it or marks it; we surface the filter and let the
+  // user's selection be validated by the live API, P1.)
+  listDispatchableWorkflows(workflows: Array<WorkflowMeta>): Array<WorkflowMeta> {
+    return workflows.filter((w) => w.state === "active");
+  }
+
+  // Trigger a workflow_dispatch deployment.
+  //   POST /repos/{owner}/{repo}/actions/workflows/{workflowId}/dispatches
+  //     body: { ref, inputs }
+  // Returns 204 on success (no body). Any 422 (non-dispatchable workflow / bad
+  // ref) is surfaced verbatim so the UI shows GitHub's real reason (§11).
+  async dispatchWorkflow(
+    owner: string,
+    repo: string,
+    workflowId: number,
+    opts: { ref: string; inputs?: Record<string, string> }
+  ): Promise<void> {
+    const r = await this.request<{ message?: string }>({
+      method: "POST",
+      path: `/repos/${owner}/${repo}/actions/workflows/${workflowId}/dispatches`,
+      body: { ref: opts.ref, inputs: opts.inputs || {} },
+    });
+    if (!r.ok) {
+      const msg = (r.data as { message?: string }).message || `HTTP ${r.status}`;
+      throw new Error(msg);
+    }
+  }
+
+  // Fetch a single workflow run by id — used to watch a dispatch reach a
+  // terminal state (§8 Watch).
+  //   GET /repos/{owner}/{repo}/actions/runs/{runId}
+  async getWorkflowRun(owner: string, repo: string, runId: number): Promise<WorkflowRun> {
+    const r = await this.request<{
+      id: number;
+      name: string;
+      display_title?: string;
+      status: WorkflowRun["status"];
+      conclusion: string | null;
+      head_sha?: string;
+      head_branch?: string;
+      run_number?: number;
+      event?: string;
+      html_url?: string;
+      created_at?: string;
+      updated_at?: string;
+    }>({ method: "GET", path: `/repos/${owner}/${repo}/actions/runs/${runId}` });
+    if (!r.ok) {
+      throw new Error(`Failed to load workflow run: HTTP ${r.status}`);
+    }
+    const w = r.data;
+    return {
+      id: w.id,
+      name: w.name,
+      displayTitle: w.display_title || w.name,
+      status: w.status,
+      conclusion: w.conclusion,
+      headSha: w.head_sha || "",
+      headBranch: w.head_branch || "",
+      runNumber: w.run_number || 0,
+      event: w.event || "",
+      htmlUrl: w.html_url || `https://github.com/${owner}/${repo}/actions/runs/${w.id}`,
+      createdAt: w.created_at || "",
+      updatedAt: w.updated_at || "",
     };
   }
 }

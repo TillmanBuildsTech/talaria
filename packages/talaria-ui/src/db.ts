@@ -158,6 +158,28 @@ export type CachedRepoGates = {
   fetchedAt: number;
 };
 
+// A workflow_dispatch deployment we triggered or are watching (M2 spec §4.1).
+// Local-first cache of the GitHub workflow run, tagged by project scope (P9).
+export type DeploymentStatus = "queued" | "in_progress" | "completed";
+export type Deployment = {
+  id: string; // `${repoId}:${runId}` — stable key for upsert
+  repoId: string; // `${owner}/${name}`
+  owner: string;
+  repo: string;
+  runId: number;
+  workflow: string; // workflow file path
+  workflowDisplay: string;
+  ref: string; // branch/ref dispatched on
+  inputs: Record<string, string>;
+  headSha: string;
+  status: DeploymentStatus;
+  conclusion?: string | null; // success | failure | cancelled | ...
+  triggeredAt: number;
+  updated?: number; // last status poll time
+  url: string; // linkable back to GitHub (P3)
+  project: string | null; // P9 scope — active project id, or null = global
+};
+
 type HermesChatDB = Dexie & {
   agents: EntityTable<Agent, "name">;
   messages: EntityTable<ChatMessage, "id">;
@@ -169,6 +191,7 @@ type HermesChatDB = Dexie & {
   prCachedRepos: EntityTable<CachedRepo, "fullName">;
   pullRequests: EntityTable<CachedPullRequest, "id">;
   repoGates: EntityTable<CachedRepoGates, "fullName">;
+  deployments: EntityTable<Deployment, "id">;
 };
 
 const db = new Dexie("HermesChatDB") as HermesChatDB;
@@ -200,6 +223,11 @@ db.version(5).stores({
   prCachedRepos: "fullName, owner, updatedAt",
   pullRequests: "id, fullName, updatedAt",
   repoGates: "fullName, fetchedAt",
+});
+// v6: add the deployments table (M2 §8, spec §4.1) — workflow_dispatch runs
+// tagged by project scope (P9). Idempotent upsert by `${repoId}:${runId}`.
+db.version(6).stores({
+  deployments: "id, repoId, runId, status, project, triggeredAt",
 });
 
 // Default agents seeded from the Hermes profiles on this host. Users can add /

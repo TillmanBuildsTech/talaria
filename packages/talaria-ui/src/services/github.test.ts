@@ -356,3 +356,74 @@ describe("GitHubClient repo browser (M2)", () => {
     await expect(client.listRepos()).rejects.toThrow(/rate limit exceeded/);
   });
 });
+
+describe("Deployments — workflow_dispatch (workflow-spec §8)", () => {
+  it("listWorkflows maps workflows and hits the actions/workflows endpoint", async () => {
+    const fetchMock = mockFetch({
+      body: {
+        workflows: [
+          { id: 1, name: "Deploy", path: ".github/workflows/deploy.yml", state: "active", html_url: "https://github.com/o/r/actions/workflows/1" },
+          { id: 2, name: "Archive", path: ".github/workflows/archive.yml", state: "disabled_manually" },
+        ],
+      },
+    });
+    const client = new GitHubClient(new DirectGitHubTransport(fetchMock));
+    const workflows = await client.listWorkflows("o", "r");
+    expect(workflows).toHaveLength(2);
+    expect(workflows[0].state).toBe("active");
+    const [url] = callArgs(fetchMock);
+    expect(url).toBe("https://api.github.com/repos/o/r/actions/workflows?per_page=100");
+  });
+
+  it("listDispatchableWorkflows filters to active (dispatchable) workflows only", () => {
+    const client = new GitHubClient();
+    const dispatchable = client.listDispatchableWorkflows([
+      { id: 1, name: "Deploy", path: "d.yml", state: "active", htmlUrl: "u" },
+      { id: 2, name: "Archive", path: "a.yml", state: "disabled_manually", htmlUrl: "u" },
+      { id: 3, name: "Inactive", path: "i.yml", state: "disabled_inactivity", htmlUrl: "u" },
+    ]);
+    expect(dispatchable.map((w) => w.id)).toEqual([1]);
+  });
+
+  it("dispatchWorkflow POSTs ref + inputs to the dispatches endpoint", async () => {
+    const fetchMock = mockFetch({ status: 204, body: {} });
+    const client = new GitHubClient(new DirectGitHubTransport(fetchMock));
+    await client.dispatchWorkflow("o", "r", 7, { ref: "main", inputs: { environment: "production" } });
+    const [url, init] = callArgs(fetchMock);
+    expect(url).toBe("https://api.github.com/repos/o/r/actions/workflows/7/dispatches");
+    expect(JSON.parse(String(init.body))).toEqual({ ref: "main", inputs: { environment: "production" } });
+  });
+
+  it("dispatchWorkflow surfaces GitHub's 422 message verbatim (non-dispatchable / bad ref)", async () => {
+    const fetchMock = mockFetch({ status: 422, body: { message: "No workflow_dispatch event in workflow file" } });
+    const client = new GitHubClient(new DirectGitHubTransport(fetchMock));
+    await expect(client.dispatchWorkflow("o", "r", 7, { ref: "main" })).rejects.toThrow(
+      "No workflow_dispatch event in workflow file"
+    );
+  });
+
+  it("getWorkflowRun maps a single run for status watch", async () => {
+    const fetchMock = mockFetch({
+      body: {
+        id: 99,
+        name: "Deploy",
+        display_title: "Deploy production",
+        status: "in_progress",
+        conclusion: null,
+        head_sha: "abc123",
+        head_branch: "main",
+        run_number: 7,
+        event: "workflow_dispatch",
+        html_url: "https://github.com/o/r/actions/runs/99",
+      },
+    });
+    const client = new GitHubClient(new DirectGitHubTransport(fetchMock));
+    const run = await client.getWorkflowRun("o", "r", 99);
+    expect(run.id).toBe(99);
+    expect(run.status).toBe("in_progress");
+    expect(run.event).toBe("workflow_dispatch");
+    expect(run.headBranch).toBe("main");
+    const [url] = callArgs(fetchMock);
+    expect(url).toBe("https://api.github.com/repos/o/r/actions/runs/99");
+  });
+});
