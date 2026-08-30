@@ -62,5 +62,7 @@ gateway API URL and the profile keys under **Settings** in the app.
 React 19 · Vite · Zustand · Dexie (IndexedDB) · Tailwind CSS v4 · vite-plugin-pwa
 — UI lives in the shared [`@talaria/ui`](../../packages/talaria-ui) package.
 
-See [`DESIGN.md`](DESIGN.md) for architecture notes and the multi-agent
-routing contract.
+Product vision and planning live in [`apps/docs`](../docs) — the end state for
+`apps/docs` is a Docusaurus user-documentation site. (The old `DESIGN.md` and
+`IDEA.md` here were removed: they described the pre-React/Vue implementation
+and an unrelated idea.)
