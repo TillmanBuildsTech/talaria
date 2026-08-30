@@ -289,8 +289,11 @@ export function App() {
       {/* Body: left nav rail + active module */}
       <div className="flex flex-1 min-h-0">
         <NavRail active={module} onSelect={setModule} />
-
-        {module === "repos" ? (
+        {module === "observability" ? (
+          <div className="flex-1 min-h-0">
+            <Observability />
+          </div>
+        ) : module === "repos" ? (
           <div className="flex-1 min-h-0">
             <RepoBrowser />
           </div>
