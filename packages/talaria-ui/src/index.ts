@@ -133,3 +133,30 @@ export type {
 } from "./services/docs";
 export type { DocsState } from "./stores/docs";
 export { useDocsStore } from "./stores/docs";
+export { CodeEditor } from "./components/code-editor";
+export {
+  DesktopOnlyEditorBackend,
+  getEditorBackend,
+  isEditorAvailable,
+  setEditorBackend,
+} from "./services/editor-capability";
+export type {
+  CodeEditorBackend,
+  EditorDocument,
+  EditorPlatform,
+  EditorSaveResult,
+  EditorTarget,
+} from "./services/editor-capability";
+export {
+  GitHubEditorBackend,
+  registerEditorBackendForPlatform,
+} from "./services/github-editor-backend";
+export { encodeBase64, decodeBase64 } from "./services/github";
+export type {
+  GitTreeNode,
+  GitTree,
+  RepoContentFile,
+  SaveFileResult,
+} from "./services/github";
+export type { EditorState } from "./stores/editor";
+export { useEditorStore } from "./stores/editor";
