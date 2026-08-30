@@ -30,7 +30,7 @@ jobs:
         with:
           path: head
       - name: Verify version bumped vs main
-        run: node head/scripts/check-version-bump.mjs base/package.json head/package.json
+        run: node head/scripts/check-version-bump.mjs base/apps/pwa/package.json head/apps/pwa/package.json
 
   build-test:
     name: Build & test
@@ -42,13 +42,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'   # matches Dockerfile (node:22-alpine)
-          cache: 'npm'
+      - name: Enable Corepack (pnpm)
+        run: corepack enable
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
       - name: Run tests
-        run: npm run test
+        run: pnpm -r --if-present test
       - name: Build
-        run: npm run build
+        run: pnpm -r --if-present build
 
   # Keep the shipped Docker image honest: the container build is the real
   # artifact Talaria runs as, so build it in CI too.
@@ -64,6 +65,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: apps/pwa/Dockerfile
           push: false
           load: true
           tags: talaria:ci
