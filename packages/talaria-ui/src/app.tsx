@@ -7,6 +7,7 @@ import { NavRail, type NavModuleId } from "./components/nav-rail";
 import { DocsEditor } from "./components/docs-editor";
 import { Observability } from "./components/observability";
 import { PrPanel } from "./components/pr-panel";
+import { KanbanBoard } from "./components/kanban-board";
 import { ProjectPicker } from "./components/project-picker";
 import { RepoBrowser } from "./components/repo-browser";
 import { SettingsPage } from "./components/settings-page";
@@ -156,7 +157,7 @@ export function App() {
   }, [activeProjectId]);
 
   return (
-    <div className="flex flex-col h-dvh bg-slate-900 text-slate-100 overflow-hidden">
+    <div className="flex flex-col h-dvh bg-slate-900 text-slate-100 overflow-hidden relative">
       <ConnectionBanner />
 
       {/* Top bar */}
@@ -315,6 +316,10 @@ export function App() {
         ) : module === "docs" ? (
           <div className="flex-1 min-h-0">
             <DocsEditor />
+          </div>
+        ) : module === "command-center" ? (
+          <div className="flex-1 min-h-0">
+            <KanbanBoard />
           </div>
         ) : module === "settings" ? (
           <SettingsPage onClose={() => setModule("chat")} />
