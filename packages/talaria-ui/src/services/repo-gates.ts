@@ -22,6 +22,7 @@ export type RepoGates = {
   requiredReviewers: number; // required approving reviews (0 = none)
   enforceAdmins: boolean;
   squashOnly: boolean; // only squash merges allowed
+  allowSquash: boolean; // repo.allow_squash_merge
   allowMergeCommit: boolean;
   allowRebaseMerge: boolean;
   directPushAllowed: boolean; // !branchProtected → agents can push straight to the branch like the user does
@@ -52,6 +53,7 @@ export function deriveRepoGates(protection: BranchProtectionResult, repo: GitHub
     requiredReviewers: data?.required_pull_request_reviews?.required_approving_review_count ?? 0,
     enforceAdmins: data?.enforce_admins?.enabled ?? false,
     squashOnly,
+    allowSquash,
     allowMergeCommit,
     allowRebaseMerge: allowRebase,
     directPushAllowed: !branchProtected,
@@ -117,26 +119,32 @@ export function resolveRequiredChecks(gates: RepoGates, status: CombinedStatus |
   });
 }
 
-/** The merge methods the repo permits (§6.3). Squash always when not the sole disallowed. */
+/** The merge methods the repo permits (§6.3). Squash only when allow_squash_merge. */
 export function allowedMergeMethods(gates: RepoGates): Array<MergeMethod> {
   const allowed: Array<MergeMethod> = [];
   if (gates.allowMergeCommit) allowed.push("merge");
   if (gates.allowRebaseMerge) allowed.push("rebase");
-  // GitHub always permits squash merges unless every method is off; a repo with
-  // none can't merge at all (surfaced as "no permitted merge method").
-  allowed.push("squash");
+  // Squash only when the repo's allow_squash_merge toggle is on (P1: never
+  // offer a method GitHub would reject).
+  if (gates.allowSquash) allowed.push("squash");
   return allowed;
 }
 
 /**
  * The default merge method GitHub would use (§6.3): squash-only → squash;
  * merge-commit-only → merge; rebase-only → rebase; multiple allowed → squash
- * (GitHub's modern default).
+ * (GitHub's modern default). Falls back to a still-permitted method when
+ * squash is disabled, and to "squash" only as a last resort (merge is gated
+ * off entirely when no method is permitted).
  */
 export function defaultMergeMethod(gates: RepoGates): MergeMethod {
   if (gates.allowMergeCommit && !gates.allowRebaseMerge) return "merge";
   if (gates.allowRebaseMerge && !gates.allowMergeCommit) return "rebase";
-  return "squash";
+  if (gates.allowSquash) return "squash";
+  // Squash disabled but another method is still available — pick a permitted one.
+  if (gates.allowMergeCommit) return "merge";
+  if (gates.allowRebaseMerge) return "rebase";
+  return "squash"; // no permitted method; canMergePullRequest gates merge off
 }
 
 export type MergeEligibility = {
