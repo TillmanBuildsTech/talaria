@@ -296,3 +296,63 @@ describe("CI status — check-run gate logic (workflow-spec §7, P1)", () => {
     expect(summary.requiredPassing).toBe(2);
   });
 });
+
+describe("GitHubClient repo browser (M2)", () => {
+  const repoBody = [
+    {
+      id: 1,
+      name: "talaria",
+      full_name: "tillmanbuildstech/talaria",
+      owner: { login: "tillmanbuildstech" },
+      default_branch: "main",
+      private: false,
+      description: "Developer portal",
+      html_url: "https://github.com/tillmanbuildstech/talaria",
+    },
+  ];
+
+  it("listRepos returns accessible repo metadata and sets the auth token", async () => {
+    const fetchMock = mockFetch({ body: repoBody });
+    const client = new GitHubClient(new DirectGitHubTransport(fetchMock));
+    client.setToken("gho_secret");
+    const repos = await client.listRepos();
+    expect(repos.length).toBe(1);
+    expect(repos[0].full_name).toBe("tillmanbuildstech/talaria");
+    const [url, init] = callArgs(fetchMock);
+    expect(url).toContain("/user/repos");
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer gho_secret");
+  });
+
+  it("listBranches hits the branches endpoint", async () => {
+    const fetchMock = mockFetch({ body: [{ name: "main", commit: { sha: "abc123" } }] });
+    const client = new GitHubClient(new DirectGitHubTransport(fetchMock));
+    const branches = await client.listBranches("tillmanbuildstech", "talaria");
+    expect(branches[0].name).toBe("main");
+    const [url] = callArgs(fetchMock);
+    expect(url).toBe("https://api.github.com/repos/tillmanbuildstech/talaria/branches?per_page=100");
+  });
+
+  it("listCommits scopes by branch and returns linkable commits (P3)", async () => {
+    const fetchMock = mockFetch({
+      body: [
+        {
+          sha: "abc123",
+          html_url: "https://github.com/tillmanbuildstech/talaria/commit/abc123",
+          commit: { message: "feat: add repo browser", author: { date: "2026-08-29T00:00:00Z" } },
+        },
+      ],
+    });
+    const client = new GitHubClient(new DirectGitHubTransport(fetchMock));
+    const commits = await client.listCommits("tillmanbuildstech", "talaria", "main");
+    expect(commits.length).toBe(1);
+    expect(commits[0].html_url).toContain("github.com");
+    const [url] = callArgs(fetchMock);
+    expect(url).toContain("/repos/tillmanbuildstech/talaria/commits?per_page=50&sha=main");
+  });
+
+  it("throws a GitHub message on a non-OK listRepos response", async () => {
+    const fetchMock = mockFetch({ status: 403, body: { message: "rate limit exceeded" } });
+    const client = new GitHubClient(new DirectGitHubTransport(fetchMock));
+    await expect(client.listRepos()).rejects.toThrow(/rate limit exceeded/);
+  });
+});

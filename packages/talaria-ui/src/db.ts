@@ -53,6 +53,10 @@ export type Conversation = {
   messageCount?: number;
   model?: string | null;
   sessions?: Record<string, string>;
+  // Project scope (P9): the workspace this conversation belongs to. null (or
+  // absent) means the global/unassigned scope. Scoped conversations are
+  // filtered out when a specific project is active.
+  projectId?: string | null;
 };
 
 export type Setting = {
@@ -79,12 +83,43 @@ export type GitHubConnection = {
   connectedAt: number;
 };
 
+// A Project is a self-contained workspace (P9): its own board, PO agent,
+// tasks, chats, and docs. id is an opaque UUID; the global/unassigned scope
+// is represented by `projectId: null` on scoped rows (no table row exists for
+// it — it is a reserved, non-deletable default).
+export type Project = {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string;
+  color?: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
+// A cached GitHub repo, scoped to a project (P9). Local-first cache for the
+// repo browser; actions always hit the live API. `id` is `${owner}/${name}`.
+export type Repo = {
+  id: string; // `${owner}/${name}`
+  owner: string;
+  name: string;
+  fullName: string;
+  defaultBranch: string;
+  isPrivate: boolean;
+  description?: string;
+  htmlUrl: string; // linkable artifact (P3)
+  project: string; // P9 scope — the project (id or slug) this repo is attached to; "" = global
+  lastFetchedAt: number;
+};
+
 type HermesChatDB = Dexie & {
   agents: EntityTable<Agent, "name">;
   messages: EntityTable<ChatMessage, "id">;
   conversations: EntityTable<Conversation, "id">;
   settings: EntityTable<Setting, "key">;
   connections: EntityTable<GitHubConnection, "id">;
+  projects: EntityTable<Project, "id">;
+  repos: EntityTable<Repo, "id">;
 };
 
 const db = new Dexie("HermesChatDB") as HermesChatDB;
@@ -97,9 +132,17 @@ db.version(1).stores({
 db.version(2).stores({
   agents: "name, displayName, color, sort",
 });
-// v3: add the GitHub connections table (M2 auth, spec §3.4).
+// v3: add the GitHub connections table (M2 auth) and the projects (workspaces)
+// table plus a nullable projectId scope on conversations (P9). Both land in a
+// single v3 migration; unchanged rows migrate as-is.
 db.version(3).stores({
   connections: "id, owner, type, status",
+  conversations: "++id, title, lastMessage, updatedAt, projectId",
+  projects: "id, slug, name, createdAt",
+});
+// v4: add the repos cache (M2 repo browser, spec §4.1), scoped per project.
+db.version(4).stores({
+  repos: "id, owner, name, project, lastFetchedAt",
 });
 
 // Default agents seeded from the Hermes profiles on this host. Users can add /
