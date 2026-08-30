@@ -3,6 +3,7 @@ import { ChatInput } from "./components/chat-input";
 import { ChatMessage } from "./components/chat-message";
 import { ConnectionBanner } from "./components/connection-banner";
 import { ProjectPicker } from "./components/project-picker";
+import { RepoBrowser } from "./components/repo-browser";
 import { SettingsModal } from "./components/settings-modal";
 import { Sidebar } from "./components/sidebar";
 import { useChatStore } from "./stores/chat";
@@ -45,6 +46,7 @@ export function App() {
   const store = useChatStore();
   const [showSidebar, setShowSidebar] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showRepos, setShowRepos] = useState(false);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [showModelMenu, setShowModelMenu] = useState(false);
@@ -268,6 +270,23 @@ export function App() {
           </div>
         )}
 
+        <button
+          type="button"
+          onClick={() => setShowRepos((v) => !v)}
+          className={`p-1.5 rounded-lg transition-colors ${showRepos ? "bg-slate-700 text-slate-100" : "hover:bg-slate-800 text-slate-400"}`}
+          aria-label="Repos"
+          title="Repo browser"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
+            />
+          </svg>
+        </button>
+
         <button type="button" onClick={() => setShowSettings(true)} className="p-1.5 rounded-lg hover:bg-slate-800 transition-colors" aria-label="Settings">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path
@@ -282,7 +301,7 @@ export function App() {
       </header>
 
       {/* Context-size indicator (bar turns amber → red as the chat fills the model window) */}
-      {activeConversationId && activeContextTokens > 0 && (
+      {!showRepos && activeConversationId && activeContextTokens > 0 && (
         <div className="px-4 py-1.5 flex items-center gap-2 border-b border-slate-800 bg-slate-900/70">
           <span className="text-[10px] uppercase tracking-wider text-slate-500 shrink-0">context</span>
           <div className="flex-1 h-1 rounded-full bg-slate-800 overflow-hidden">
@@ -294,33 +313,40 @@ export function App() {
         </div>
       )}
 
-      {/* Chat area */}
-      <div ref={chatContainer} className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
-        {/* Empty state */}
-        {messages.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full text-slate-500 gap-3">
-            <svg className="w-12 h-12 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={1.5}
-                d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"
-              />
-            </svg>
-            <p className="text-sm">Send a message to start chatting. Open the sidebar to message an agent directly or start a group.</p>
+      {/* Repo browser module (M2) */}
+      {showRepos ? (
+        <RepoBrowser />
+      ) : (
+        <>
+          {/* Chat area */}
+          <div ref={chatContainer} className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+            {/* Empty state */}
+            {messages.length === 0 && (
+              <div className="flex flex-col items-center justify-center h-full text-slate-500 gap-3">
+                <svg className="w-12 h-12 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.5}
+                    d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"
+                  />
+                </svg>
+                <p className="text-sm">Send a message to start chatting. Open the sidebar to message an agent directly or start a group.</p>
+              </div>
+            )}
+
+            {messages.map((msg) => (
+              <ChatMessage key={msg.id} message={msg} onRetry={() => store.retryMessage(msg.id as number)} />
+            ))}
+
+            {/* Auto-scroll anchor */}
+            <div ref={scrollAnchor} />
           </div>
-        )}
 
-        {messages.map((msg) => (
-          <ChatMessage key={msg.id} message={msg} onRetry={() => store.retryMessage(msg.id as number)} />
-        ))}
-
-        {/* Auto-scroll anchor */}
-        <div ref={scrollAnchor} />
-      </div>
-
-      {/* Input */}
-      <ChatInput onSend={handleSend} onStop={() => store.stopStreaming()} />
+          {/* Input */}
+          <ChatInput onSend={handleSend} onStop={() => store.stopStreaming()} />
+        </>
+      )}
 
       {/* Sidebar overlay */}
       {sidebar.mounted && (

@@ -77,6 +77,41 @@ export interface GitHubTransport {
 }
 
 // ---------------------------------------------------------------------------
+// Repo browser types (spec §5.2 — the GitHub REST payloads we map).
+// ---------------------------------------------------------------------------
+
+// GET /user/repos — an accessible repo's metadata.
+export type RepoMeta = {
+  id: number;
+  name: string;
+  full_name: string; // owner/name
+  owner: { login: string };
+  default_branch: string;
+  private: boolean;
+  description?: string | null;
+  html_url: string;
+};
+
+// GET /repos/{o}/{r}/branches
+export type Branch = {
+  name: string;
+  commit: { sha: string; url?: string };
+  protected?: boolean;
+};
+
+// GET /repos/{o}/{r}/commits
+export type CommitMeta = {
+  sha: string;
+  html_url: string;
+  commit: {
+    message: string;
+    author?: { name?: string; email?: string; date?: string } | null;
+    committer?: { name?: string; date?: string } | null;
+  };
+  author?: { login?: string; avatar_url?: string } | null;
+};
+
+// ---------------------------------------------------------------------------
 // Direct transport (desktop / Tauri) — native HTTP, no CORS.
 // ---------------------------------------------------------------------------
 
@@ -499,6 +534,50 @@ export class GitHubClient {
   ): Promise<{ summary: ChecksSummary; runs: Array<CheckRun> }> {
     const runs = await this.getCheckRuns(owner, repo, headSha);
     return { summary: summarizeChecks(runs, required), runs };
+  }
+
+  // -------------------------------------------------------------------------
+  // Repo browser (M2, spec §5.1/§5.2)
+  // -------------------------------------------------------------------------
+
+  // GET /user/repos — the repos the connected account can access.
+  async listRepos(): Promise<Array<RepoMeta>> {
+    const r = await this.request<Array<RepoMeta>>({
+      method: "GET",
+      path: "/user/repos?per_page=100&affiliation=owner,collaborator&sort=updated",
+    });
+    if (!r.ok) {
+      const msg = (r.data as unknown as { message?: string })?.message || `HTTP ${r.status}`;
+      throw new Error(msg);
+    }
+    return r.data || [];
+  }
+
+  // GET /repos/{o}/{r}/branches
+  async listBranches(owner: string, repo: string): Promise<Array<Branch>> {
+    const r = await this.request<Array<Branch>>({
+      method: "GET",
+      path: `/repos/${owner}/${repo}/branches?per_page=100`,
+    });
+    if (!r.ok) {
+      const msg = (r.data as unknown as { message?: string })?.message || `HTTP ${r.status}`;
+      throw new Error(msg);
+    }
+    return r.data || [];
+  }
+
+  // GET /repos/{o}/{r}/commits?sha={branch} — recent commits on a branch.
+  async listCommits(owner: string, repo: string, branch?: string): Promise<Array<CommitMeta>> {
+    const sha = branch ? `&sha=${encodeURIComponent(branch)}` : "";
+    const r = await this.request<Array<CommitMeta>>({
+      method: "GET",
+      path: `/repos/${owner}/${repo}/commits?per_page=50${sha}`,
+    });
+    if (!r.ok) {
+      const msg = (r.data as unknown as { message?: string })?.message || `HTTP ${r.status}`;
+      throw new Error(msg);
+    }
+    return r.data || [];
   }
 }
 

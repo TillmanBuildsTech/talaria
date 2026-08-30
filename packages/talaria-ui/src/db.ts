@@ -97,6 +97,21 @@ export type Project = {
   updatedAt: number;
 };
 
+// A cached GitHub repo, scoped to a project (P9). Local-first cache for the
+// repo browser; actions always hit the live API. `id` is `${owner}/${name}`.
+export type Repo = {
+  id: string; // `${owner}/${name}`
+  owner: string;
+  name: string;
+  fullName: string;
+  defaultBranch: string;
+  isPrivate: boolean;
+  description?: string;
+  htmlUrl: string; // linkable artifact (P3)
+  project: string; // P9 scope — the project (id or slug) this repo is attached to; "" = global
+  lastFetchedAt: number;
+};
+
 type HermesChatDB = Dexie & {
   agents: EntityTable<Agent, "name">;
   messages: EntityTable<ChatMessage, "id">;
@@ -104,6 +119,7 @@ type HermesChatDB = Dexie & {
   settings: EntityTable<Setting, "key">;
   connections: EntityTable<GitHubConnection, "id">;
   projects: EntityTable<Project, "id">;
+  repos: EntityTable<Repo, "id">;
 };
 
 const db = new Dexie("HermesChatDB") as HermesChatDB;
@@ -123,6 +139,10 @@ db.version(3).stores({
   connections: "id, owner, type, status",
   conversations: "++id, title, lastMessage, updatedAt, projectId",
   projects: "id, slug, name, createdAt",
+});
+// v4: add the repos cache (M2 repo browser, spec §4.1), scoped per project.
+db.version(4).stores({
+  repos: "id, owner, name, project, lastFetchedAt",
 });
 
 // Default agents seeded from the Hermes profiles on this host. Users can add /

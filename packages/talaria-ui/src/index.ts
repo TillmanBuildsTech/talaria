@@ -15,9 +15,10 @@ export {
   CiWorkflowRuns,
 } from "./components/ci-status";
 export { ProjectPicker } from "./components/project-picker";
+export { RepoBrowser } from "./components/repo-browser";
 export { SettingsModal } from "./components/settings-modal";
 export { Sidebar } from "./components/sidebar";
-export type { Agent, ChatMessage as ChatMessageRecord, Conversation, ConversationKind, GitHubConnection, GitHubConnectionStatus, GitHubConnectionType, MessageStatus, Project, Setting } from "./db";
+export type { Agent, ChatMessage as ChatMessageRecord, Conversation, ConversationKind, GitHubConnection, GitHubConnectionStatus, GitHubConnectionType, MessageStatus, Project, Repo, Setting } from "./db";
 export { default as db } from "./db";
 export { KNOWN_MODELS, knownWindowFor } from "./models";
 export type { ModelInfo } from "./models";
@@ -52,3 +53,5 @@ export type { DeviceFlowState, GitHubState } from "./stores/github";
 export { useGitHubStore } from "./stores/github";
 export type { ProjectInput, ProjectsState } from "./stores/projects";
 export { useProjectsStore } from "./stores/projects";
+export type { ReposState } from "./stores/repos";
+export { useReposStore } from "./stores/repos";
