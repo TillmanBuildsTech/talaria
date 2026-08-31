@@ -275,7 +275,8 @@ describe("GatewayDocsTransport.listDirectory", () => {
     const fetchImpl = async () => ({ ok: false, status: 404 } as Response);
     const t = new GatewayDocsTransport("http://hermes:8642", null, fetchImpl as never);
     await expect(t.listDirectory("~/.hermes/projects")).rejects.toThrow("Docs gateway HTTP 404");
-describe("git detection", () => {
+});
+});describe("git detection", () => {
   // A fake host filesystem modeling directory structure (isDir + subdir
   // contents) so we can probe listDirectory's per-subdir .git peek.
   function dirFs(): DocsFileSystem & { dirs: Map<string, Array<{ name: string; isDir: boolean }>> } {
