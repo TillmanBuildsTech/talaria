@@ -97,7 +97,7 @@ function SettingsIcon() {
 
 const DEFAULT_ENTRIES: Array<NavEntry> = [
   { id: "chat", label: "Chat", icon: <ChatIcon /> },
-  { id: "command-center", label: "Command Center", icon: <BoardIcon />, disabled: true, note: "coming soon" },
+  { id: "command-center", label: "Command Center", icon: <BoardIcon /> },
   { id: "observability", label: "Observability", icon: <BoardIcon /> },
   { id: "repos", label: "Repos", icon: <RepoIcon /> },
   { id: "prs", label: "Pull Requests", icon: <PrIcon /> },
