@@ -269,6 +269,7 @@ export function Deployments({ owner, repo, project }: DeploymentsProps) {
   const [keyUpdating, setKeyUpdating] = useState(false);
   const [keyBusy, setKeyBusy] = useState(false);
   const [keyError, setKeyError] = useState<string | null>(null);
+  const [dispatchError, setDispatchError] = useState<string | null>(null);
   const [pendingDispatch, setPendingDispatch] = useState<{
     workflowId: number;
     workflowName: string;
@@ -387,33 +388,51 @@ export function Deployments({ owner, repo, project }: DeploymentsProps) {
     if (keyBusy) return;
     setKeyBusy(true);
     setKeyError(null);
+    const pending = pendingDispatch;
+    setPendingDispatch(null);
+
+    // Domain 1: save the key. A save failure keeps the prompt open with a
+    // key-save error so the user can retry pasting the key.
     try {
       await saveVercelApiKey(apiKey);
       setKeyConfigured(true);
       setKeyChecked(true);
-      setShowKeyPrompt(false);
-      const pending = pendingDispatch;
-      setPendingDispatch(null);
-      if (pending) {
-        await doDispatch(pending.workflowId, pending.workflowName, pending.ref, pending.inputs);
-      }
     } catch (err) {
       setKeyError(err instanceof Error ? err.message : "Could not save Vercel API key");
-    } finally {
       setKeyBusy(false);
+      return;
     }
+
+    // Domain 2: if a dispatch was gated on the (now-saved) key, continue it.
+    // A dispatch failure is a dispatch error — the key WAS saved, so it must
+    // never surface as a save error.
+    setShowKeyPrompt(false);
+    if (pending) {
+      try {
+        await doDispatch(pending.workflowId, pending.workflowName, pending.ref, pending.inputs);
+      } catch (err) {
+        setDispatchError(err instanceof Error ? err.message : "Dispatch failed");
+        setShowForm(true);
+      } finally {
+        setKeyBusy(false);
+      }
+      return;
+    }
+    setKeyBusy(false);
   }
 
   function handleCancelKey() {
     setShowKeyPrompt(false);
     setPendingDispatch(null);
     setKeyError(null);
+    setDispatchError(null);
   }
 
   function openKeyUpdate() {
     setPendingDispatch(null);
-    setKeyUpdating(true);
+    setKeyUpdating(keyConfigured); // add/required mode for first-time, update mode when a key exists
     setKeyError(null);
+    setDispatchError(null);
     setShowKeyPrompt(true);
   }
 
@@ -439,19 +458,32 @@ export function Deployments({ owner, repo, project }: DeploymentsProps) {
           onCancel={handleCancelKey}
         />
       ) : showForm ? (
-        <TriggerForm
-          owner={effOwner}
-          repo={effRepo}
-          workflows={workflows}
-          busy={busy}
-          onSubmit={handleDispatch}
-          onCancel={() => setShowForm(false)}
-        />
+        <div className="space-y-2">
+          {dispatchError && (
+            <p role="alert" className="text-xs text-red-400">
+              {dispatchError}
+            </p>
+          )}
+          <TriggerForm
+            owner={effOwner}
+            repo={effRepo}
+            workflows={workflows}
+            busy={busy}
+            onSubmit={handleDispatch}
+            onCancel={() => {
+              setDispatchError(null);
+              setShowForm(false);
+            }}
+          />
+        </div>
       ) : (
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => setShowForm(true)}
+            onClick={() => {
+              setDispatchError(null);
+              setShowForm(true);
+            }}
             className="rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500 transition-colors"
           >
             + Trigger deployment
