@@ -22,6 +22,8 @@ export { PrPanel } from "./components/pr-panel";
 export { Observability } from "./components/observability";
 export { ProjectPicker } from "./components/project-picker";
 export { ProjectSettingsDialog } from "./components/project-settings-dialog";
+export { FolderPicker } from "./components/folder-picker";
+export type { PickedFolder } from "./components/folder-picker";
 export { PullRequestDetail } from "./components/pull-request-detail";
 export { PullRequestList } from "./components/pull-request-list";
 export { RepoBrowser } from "./components/repo-browser";
@@ -121,7 +123,10 @@ export {
   docsClient,
   docsDir,
   docsFilePath,
+  HOST_DIR_BASE,
+  isGitRoot,
   normalizeDocName,
+  normalizeHostDir,
   PROJECTS_ROOT,
 } from "./services/docs";
 export type {
@@ -129,6 +134,8 @@ export type {
   DocsFileSystem,
   DocsTransport,
   DocsTransportKind,
+  HostDirEntry,
+  HostDirListing,
   ProjectDoc,
   ProjectDocMeta,
 } from "./services/docs";

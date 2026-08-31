@@ -103,6 +103,10 @@ export type Project = {
   // e.g. ~/.hermes/projects/<slug>/. Project docs live under <folder>/docs/.
   // Defaults to the slug-derived path when not set.
   folder?: string;
+  // Whether the folder is a git repo root (99% of the time it is). Used to
+  // show good UX in git-dependent modules when it isn't (parent task body).
+  // undefined = not yet detected.
+  isGitRepo?: boolean;
   createdAt: number;
   updatedAt: number;
 };

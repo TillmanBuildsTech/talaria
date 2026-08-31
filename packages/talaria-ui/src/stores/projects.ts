@@ -48,6 +48,7 @@ export type ProjectInput = {
   description?: string;
   color?: string;
   folder?: string;
+  isGitRepo?: boolean;
 };
 
 export type ProjectsState = {
@@ -58,7 +59,7 @@ export type ProjectsState = {
   init: () => Promise<void>;
   loadProjects: () => Promise<void>;
   createProject: (input: ProjectInput) => Promise<Project>;
-  updateProject: (id: string, patch: Partial<Pick<Project, "name" | "slug" | "description" | "color" | "folder">>) => Promise<void>;
+  updateProject: (id: string, patch: Partial<Pick<Project, "name" | "slug" | "description" | "color" | "folder" | "isGitRepo">>) => Promise<void>;
   deleteProject: (id: string) => Promise<void>;
   setActiveProject: (id: string | null) => Promise<void>;
   // ── scope helpers (used by scoped stores at their boundary) ────────────
@@ -97,7 +98,7 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
     }
   },
 
-  async createProject({ name, slug, description, color, folder }) {
+  async createProject({ name, slug, description, color, folder, isGitRepo }) {
     const trimmed = (name || "").trim();
     if (!trimmed) throw new Error("Project name is required");
     const projectSlug = slugify(slug || trimmed);
@@ -108,6 +109,7 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
       description,
       color: color || PROJECT_COLORS[get().projects.length % PROJECT_COLORS.length],
       folder: folder || projectFolder(projectSlug),
+      isGitRepo,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -125,6 +127,7 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
       ...(patch.description !== undefined ? { description: patch.description } : {}),
       ...(patch.color !== undefined ? { color: patch.color } : {}),
       ...(patch.folder !== undefined ? { folder: patch.folder } : {}),
+      ...(patch.isGitRepo !== undefined ? { isGitRepo: patch.isGitRepo } : {}),
       updatedAt: Date.now(),
     };
     await db.projects.update(id, next);

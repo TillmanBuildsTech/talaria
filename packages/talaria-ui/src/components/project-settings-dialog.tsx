@@ -6,6 +6,7 @@
 import { useEffect, useState } from "react";
 import { PROJECT_COLORS, projectFolder, useProjectsStore } from "../stores/projects";
 import { useReposStore } from "../stores/repos";
+import { FolderPicker, type PickedFolder } from "./folder-picker";
 import type { Project } from "../db";
 
 type ProjectSettingsDialogProps = {
@@ -27,6 +28,8 @@ export function ProjectSettingsDialog({ project, onClose }: ProjectSettingsDialo
   const [description, setDescription] = useState(project.description ?? "");
   const [color, setColor] = useState(project.color ?? PROJECT_COLORS[0]);
   const [folder, setFolder] = useState(project.folder ?? projectFolder(project.slug));
+  const [isGitRepo, setIsGitRepo] = useState<boolean | undefined>(project.isGitRepo);
+  const [browsing, setBrowsing] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const trimmed = name.trim();
@@ -39,6 +42,12 @@ export function ProjectSettingsDialog({ project, onClose }: ProjectSettingsDialo
     // biome-ignore lint/correctness/useExhaustiveDependencies: load once on open
   }, []);
 
+  function handlePick(picked: PickedFolder) {
+    setFolder(picked.path);
+    setIsGitRepo(picked.isGitRepo);
+    setBrowsing(false);
+  }
+
   async function save() {
     if (!trimmed || busy) return;
     setBusy(true);
@@ -47,6 +56,7 @@ export function ProjectSettingsDialog({ project, onClose }: ProjectSettingsDialo
       description: description.trim() || undefined,
       color,
       folder: trimmedFolder,
+      isGitRepo,
     });
     setBusy(false);
     onClose();
@@ -135,17 +145,35 @@ export function ProjectSettingsDialog({ project, onClose }: ProjectSettingsDialo
             <label className="block text-xs font-medium text-slate-400 mb-1.5" htmlFor="project-settings-folder">
               Server folder
             </label>
-            <input
-              id="project-settings-folder"
-              value={folder}
-              onChange={(e) => setFolder(e.target.value)}
-              className="w-full bg-slate-900 text-sm rounded-lg px-3 py-2.5 border-none outline-none focus:ring-2 focus:ring-blue-500/50 text-slate-100 placeholder-slate-600 font-mono text-xs"
-              placeholder={projectFolder(project.slug)}
-            />
+            <div className="flex items-center gap-2">
+              <input
+                id="project-settings-folder"
+                value={folder}
+                onChange={(e) => setFolder(e.target.value)}
+                className="flex-1 min-w-0 bg-slate-900 text-sm rounded-lg px-3 py-2.5 border-none outline-none focus:ring-2 focus:ring-blue-500/50 text-slate-100 placeholder-slate-600 font-mono text-xs"
+                placeholder={projectFolder(project.slug)}
+              />
+              <button
+                type="button"
+                onClick={() => setBrowsing((v) => !v)}
+                className="shrink-0 px-3 py-2.5 rounded-lg border border-slate-700 hover:bg-slate-800 text-xs text-slate-300 transition-colors"
+              >
+                {browsing ? "Cancel" : "Browse…"}
+              </button>
+            </div>
             <p className="text-[11px] text-slate-600 mt-1">
               The workspace folder on the Hermes server this project maps to. Docs live under{" "}
               <code className="text-slate-500">{"<folder>/docs/"}</code>.
+              {isGitRepo === false && (
+                <span className="text-amber-400"> Not a git repository — git features (editor, PRs) will be limited.</span>
+              )}
+              {isGitRepo === true && <span className="text-emerald-400"> Git repository.</span>}
             </p>
+            {browsing && (
+              <div className="mt-2">
+                <FolderPicker initialPath={trimmedFolder} onPick={handlePick} />
+              </div>
+            )}
           </div>
 
           <div className="border-t border-slate-700/40 pt-3">
