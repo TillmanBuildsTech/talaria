@@ -11,13 +11,14 @@
 
 import { createServer, request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
-import { readFile, readdir } from 'node:fs/promises'
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { extname, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { serveTalariaConfig } from './talaria-config.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const DIST = join(__dirname, 'dist')
@@ -64,135 +65,13 @@ function isGatewayPath(path) {
   )
 }
 
-// Read API_SERVER_KEY from an env file (quotes trimmed).
-function readApiServerKey(envPath) {
-  if (!existsSync(envPath)) return ''
-  try {
-    for (const line of readFileSync(envPath, 'utf8').split('\n')) {
-      const t = line.trim()
-      if (t.startsWith('API_SERVER_KEY=')) {
-        return t.slice('API_SERVER_KEY='.length).trim().replace(/^"|"$/g, '')
-      }
-    }
-  } catch { /* ignore */ }
-  return ''
-}
-
-// Read the top-level `model:` block from a profile's config.yaml — the real
-// model + provider Hermes is configured to run for that profile, plus any
-// explicit context_length (context window) override.
-function readProfileModel(profileDir) {
-  const cfgPath = join(profileDir, 'config.yaml')
-  if (!existsSync(cfgPath)) return {}
-  try {
-    const lines = readFileSync(cfgPath, 'utf8').split('\n')
-    let inModel = false
-    let model = '', provider = '', contextLength = null
-    for (const raw of lines) {
-      if (!inModel) {
-        if (/^model:\s*$/.test(raw)) { inModel = true; continue }
-        continue
-      }
-      const m = raw.match(/^(\s+)(\S+):\s*(.*)$/)
-      if (!m) break // left the model block (top-level key)
-      const k = m[2]
-      const v = m[3].trim().replace(/^['"]|['"]$/g, '')
-      if (k === 'provider') provider = v
-      else if (k === 'default') model = v
-      else if (k === 'context_length') {
-        const n = Number.parseInt(v, 10)
-        if (Number.isFinite(n)) contextLength = n
-      }
-    }
-    return { model, provider, contextLength }
-  } catch { return {} }
-}
-
-// Scan the host's Hermes env files (.env + every profile/.env) for a
-// provider credential variable. A key "present" means that provider's models
-// are actually usable — the honest gate for which models to offer.
-function envKeyPresent(varName) {
-  const files = [join(HERMES_HOME, '.env')]
-  try {
-    const profilesDir = join(HERMES_HOME, 'profiles')
-    if (existsSync(profilesDir)) {
-      for (const name of readdirSync(profilesDir)) files.push(join(profilesDir, name, '.env'))
-    }
-  } catch { /* ignore */ }
-  const prefix = varName + '='
-  for (const f of files) {
-    if (!existsSync(f)) continue
-    try {
-      for (const line of readFileSync(f, 'utf8').split('\n')) {
-        const t = line.trim()
-        if (t.startsWith(prefix)) {
-          const v = t.slice(prefix.length).trim().replace(/^['"]|['"]$/g, '')
-          if (v) return true
-        }
-      }
-    } catch { /* ignore */ }
-  }
-  return false
-}
-
-// Model providers the host has credentials for. Only these providers' models
-// will actually run, so only their models are shown in the dropdown.
-function modelProvidersAvailable() {
-  const map = {
-    openrouter: ['OPENROUTER_API_KEY'],
-    'opencode-go': ['OPENCODE_GO_API_KEY'],
-    anthropic: ['ANTHROPIC_API_KEY'],
-    openai: ['OPENAI_API_KEY'],
-    gemini: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'],
-    deepseek: ['DEEPSEEK_API_KEY'],
-    'x-ai': ['XAI_API_KEY', 'GROK_API_KEY'],
-    groq: ['GROQ_API_KEY'],
-    mistral: ['MISTRAL_API_KEY'],
-    nvidia: ['NVIDIA_API_KEY'],
-    minimax: ['MINIMAX_API_KEY'],
-    moonshot: ['MOONSHOT_API_KEY'],
-    'z-ai': ['ZAI_API_KEY', 'GLM_API_KEY']
-  }
-  const present = []
-  for (const [provider, vars] of Object.entries(map)) {
-    if (vars.some(v => envKeyPresent(v))) present.push(provider)
-  }
-  return present
-}
-
 // Serve the REAL per-profile API keys so the app can auto-provision every agent
 // (never fabricated, never committed to the repo — read at runtime from the
-// host's Hermes profile env files). Only enabled on this local host.
+// host's Hermes profile env files). Only enabled on this local host. Logic
+// lives in the shared talaria-config.mjs so the Vite dev server (the live path
+// the app actually uses) can serve the exact same payload.
 async function serveConfig(res) {
-  let base = readApiServerKey(join(HERMES_HOME, '.env'))
-  const agents = {}
-  const models = {}
-  try {
-    const profilesDir = join(HERMES_HOME, 'profiles')
-    if (existsSync(profilesDir)) {
-      for (const name of await readdir(profilesDir)) {
-        const dir = join(profilesDir, name)
-        const key = readApiServerKey(join(dir, '.env'))
-        if (key) agents[name] = key
-        const m = readProfileModel(dir)
-        if (m.model) models[name] = { model: m.model, provider: m.provider || '', contextLength: m.contextLength || null }
-      }
-    }
-  } catch { /* ignore */ }
-  // Container deployment fallback: when the host's profile dirs aren't
-  // present (Coolify), keys come from env secrets instead.
-  if (!base && process.env.TALARIA_BASE_KEY) base = process.env.TALARIA_BASE_KEY
-  if (Object.keys(agents).length === 0 && process.env.TALARIA_AGENT_KEYS) {
-    try {
-      const parsed = JSON.parse(process.env.TALARIA_AGENT_KEYS)
-      for (const [name, key] of Object.entries(parsed)) {
-        if (name && key) agents[name] = key
-      }
-    } catch { /* ignore */ }
-  }
-  const body = JSON.stringify({ base, agents, models, modelProviders: modelProvidersAvailable() })
-  res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
-  res.end(body)
+  serveTalariaConfig(res)
 }
 
 // ───────────────────────────────────────────────────────────────────────────
