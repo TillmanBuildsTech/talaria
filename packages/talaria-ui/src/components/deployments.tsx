@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useGitHubStore } from "../stores/github";
 import { useReposStore } from "../stores/repos";
+import { getVercelKeyConfigured, saveVercelApiKey } from "../services/vercel-key";
 import { GitRepoNotice } from "./git-repo-notice";
+import { VercelKeyPrompt } from "./vercel-key-prompt";
 import type { Deployment } from "../db";
 import type { WorkflowMeta } from "../services/github";
 
@@ -257,6 +259,23 @@ export function Deployments({ owner, repo, project }: DeploymentsProps) {
   const [busy, setBusy] = useState(false);
   const [workflowsError, setWorkflowsError] = useState<string | null>(null);
 
+  // Vercel API-key gate (this task). Deployments must not start until a default
+  // key is stored server-side; if it isn't, show the key prompt and continue the
+  // pending dispatch after a successful save. The GET/PUT live on the same
+  // origin as the app (serve.mjs + Vite dev), so no gateway auth is needed.
+  const [keyChecked, setKeyChecked] = useState(false);
+  const [keyConfigured, setKeyConfigured] = useState(false);
+  const [showKeyPrompt, setShowKeyPrompt] = useState(false);
+  const [keyUpdating, setKeyUpdating] = useState(false);
+  const [keyBusy, setKeyBusy] = useState(false);
+  const [keyError, setKeyError] = useState<string | null>(null);
+  const [pendingDispatch, setPendingDispatch] = useState<{
+    workflowId: number;
+    workflowName: string;
+    ref: string;
+    inputs: Record<string, string>;
+  } | null>(null);
+
   const refresh = useCallback(
     (d: Deployment) => {
       // no-op — store already updated via loadDeployments inside refreshDeployment
@@ -290,6 +309,29 @@ export function Deployments({ owner, repo, project }: DeploymentsProps) {
     };
   }, [effOwner, effRepo, project, listDispatchableWorkflows]);
 
+  // Best-effort read of whether a default Vercel API key is already stored, so
+  // the trigger area can show an "update key" affordance and skip the prompt
+  // when one exists. A failed read is treated as "not configured" — the gate
+  // re-checks fresh at dispatch time regardless, so this is purely cosmetic.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let configured = false;
+      try {
+        configured = await getVercelKeyConfigured();
+      } catch {
+        configured = false;
+      }
+      if (!cancelled) {
+        setKeyConfigured(configured);
+        setKeyChecked(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Auto-poll running deployments while any are in_progress (light cadence).
   const running = useMemo(() => deployments.filter((d) => d.status !== "completed"), [deployments]);
   useEffect(() => {
@@ -306,7 +348,8 @@ export function Deployments({ owner, repo, project }: DeploymentsProps) {
     return () => clearTimeout(timer);
   }, [running, refreshDeployment]);
 
-  async function handleDispatch(workflowId: number, workflowName: string, ref: string, inputs: Record<string, string>) {
+  // The actual dispatch (runs once the key gate passes).
+  async function doDispatch(workflowId: number, workflowName: string, ref: string, inputs: Record<string, string>) {
     setBusy(true);
     try {
       await dispatchDeployment({ owner: effOwner, repo: effRepo, workflowId, workflowName, ref, inputs, project });
@@ -314,6 +357,64 @@ export function Deployments({ owner, repo, project }: DeploymentsProps) {
     } finally {
       setBusy(false);
     }
+  }
+
+  // Gate: deployments must not start without a stored default Vercel API key.
+  async function handleDispatch(workflowId: number, workflowName: string, ref: string, inputs: Record<string, string>) {
+    if (keyBusy) return; // avoid duplicate submissions while a save is in flight
+    let configured = keyConfigured;
+    if (!keyChecked) {
+      try {
+        configured = await getVercelKeyConfigured();
+      } catch {
+        configured = false;
+      }
+      setKeyConfigured(configured);
+      setKeyChecked(true);
+    }
+    if (!configured) {
+      // Stash the dispatch so it continues after the key is saved.
+      setPendingDispatch({ workflowId, workflowName, ref, inputs });
+      setKeyUpdating(false);
+      setKeyError(null);
+      setShowKeyPrompt(true);
+      return;
+    }
+    await doDispatch(workflowId, workflowName, ref, inputs);
+  }
+
+  async function handleSaveKey(apiKey: string) {
+    if (keyBusy) return;
+    setKeyBusy(true);
+    setKeyError(null);
+    try {
+      await saveVercelApiKey(apiKey);
+      setKeyConfigured(true);
+      setKeyChecked(true);
+      setShowKeyPrompt(false);
+      const pending = pendingDispatch;
+      setPendingDispatch(null);
+      if (pending) {
+        await doDispatch(pending.workflowId, pending.workflowName, pending.ref, pending.inputs);
+      }
+    } catch (err) {
+      setKeyError(err instanceof Error ? err.message : "Could not save Vercel API key");
+    } finally {
+      setKeyBusy(false);
+    }
+  }
+
+  function handleCancelKey() {
+    setShowKeyPrompt(false);
+    setPendingDispatch(null);
+    setKeyError(null);
+  }
+
+  function openKeyUpdate() {
+    setPendingDispatch(null);
+    setKeyUpdating(true);
+    setKeyError(null);
+    setShowKeyPrompt(true);
   }
 
   const hasConnection = useGitHubStore((s) => s.connections.length > 0);
@@ -329,6 +430,14 @@ export function Deployments({ owner, repo, project }: DeploymentsProps) {
         <p className="text-xs text-amber-400 bg-amber-400/10 border border-amber-400/20 rounded-lg px-3 py-2">
           No repository is attached to this project. Attach one in the Repos module to trigger deployments for it.
         </p>
+      ) : showKeyPrompt ? (
+        <VercelKeyPrompt
+          updating={keyUpdating}
+          busy={keyBusy}
+          error={keyError}
+          onSave={handleSaveKey}
+          onCancel={handleCancelKey}
+        />
       ) : showForm ? (
         <TriggerForm
           owner={effOwner}
@@ -339,13 +448,23 @@ export function Deployments({ owner, repo, project }: DeploymentsProps) {
           onCancel={() => setShowForm(false)}
         />
       ) : (
-        <button
-          type="button"
-          onClick={() => setShowForm(true)}
-          className="rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500 transition-colors"
-        >
-          + Trigger deployment
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowForm(true)}
+            className="rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500 transition-colors"
+          >
+            + Trigger deployment
+          </button>
+          <button
+            type="button"
+            onClick={openKeyUpdate}
+            className="rounded border border-slate-700 px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors"
+            title="View or update the stored default Vercel API key used for deployments"
+          >
+            {keyConfigured ? "Vercel API key · change" : "Set Vercel API key"}
+          </button>
+        </div>
       )}
 
       {workflowsError && <p className="text-xs text-amber-400">Workflows unavailable: {workflowsError}</p>}

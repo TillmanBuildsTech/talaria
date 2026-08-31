@@ -26,6 +26,7 @@ export { ProjectSettingsDialog } from "./components/project-settings-dialog";
 export { FolderPicker } from "./components/folder-picker";
 export type { PickedFolder } from "./components/folder-picker";
 export { GitRepoNotice } from "./components/git-repo-notice";
+export { VercelKeyPrompt } from "./components/vercel-key-prompt";
 export { PullRequestDetail } from "./components/pull-request-detail";
 export { RepoPicker } from "./components/repo-picker";
 export { SettingsPage } from "./components/settings-page";
@@ -57,6 +58,8 @@ export { default as db } from "./db";
 export { KNOWN_MODELS, knownWindowFor } from "./models";
 export type { ModelInfo } from "./models";
 export { createConnectionMonitor, hermesClient } from "./services/hermes";
+export { getVercelKeyConfigured, saveVercelApiKey } from "./services/vercel-key";
+export type { VercelKeyStatus } from "./services/vercel-key";
 export type { ConnectionMonitorCallbacks, SessionRecord, SessionSummary, StreamCallbacks, StreamMessage, StreamOptions, StreamUsage } from "./services/hermes";
 export {
   DirectGitHubTransport,
