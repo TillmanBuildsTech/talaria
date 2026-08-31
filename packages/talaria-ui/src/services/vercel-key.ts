@@ -54,3 +54,52 @@ export async function saveVercelApiKey(
     throw new Error(`Could not save Vercel API key (HTTP ${res.status})${detail}`);
   }
 }
+
+// ── Server-side deployment dispatch ─────────────────────────────────────────
+//
+// The Deployments trigger is dispatched server-side (POST /api/deployments/
+// dispatch) so the stored Vercel API key can be injected into the workflow
+// inputs WITHOUT ever reaching the browser. The server reads the key, adds it
+// as `vercel_token` only when the target workflow declares that input, and
+// forwards the workflow_dispatch to GitHub via the gateway proxy.
+//
+// This client just relays the dispatch params + the gateway API key (which the
+// server forwards to the gateway proxy so the GitHub token attaches). The raw
+// Vercel key is never sent by the browser.
+
+export type DispatchDeploymentParams = {
+  owner: string;
+  repo: string;
+  workflowId: number;
+  ref: string;
+  inputs?: Record<string, string>;
+};
+
+const DISPATCH_URL = "/api/deployments/dispatch";
+
+// POST — dispatch a workflow_dispatch through the server so the stored Vercel
+// key is injected server-side. `apiKey` is the gateway API key (the same Bearer
+// the browser sends for gateway GitHub proxy calls) — serve.mjs forwards it so
+// the gateway attaches the GitHub token. Throws on any GitHub error.
+export async function dispatchDeploymentViaServer(
+  params: DispatchDeploymentParams,
+  apiKey: string | null,
+  fetchImpl: typeof fetch = fetch.bind(globalThis as typeof globalThis & Window)
+): Promise<void> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+  const res = await fetchImpl(DISPATCH_URL, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(params),
+  });
+  if (res.ok) return; // 204
+  let detail = "";
+  try {
+    const body = (await res.json()) as { error?: string };
+    detail = body?.error ? `: ${body.error}` : "";
+  } catch {
+    /* non-JSON error body — fall back to status */
+  }
+  throw new Error(`Dispatch failed (HTTP ${res.status})${detail}`);
+}
