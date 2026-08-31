@@ -58,8 +58,8 @@ export { default as db } from "./db";
 export { KNOWN_MODELS, knownWindowFor } from "./models";
 export type { ModelInfo } from "./models";
 export { createConnectionMonitor, hermesClient } from "./services/hermes";
-export { getVercelKeyConfigured, saveVercelApiKey } from "./services/vercel-key";
-export type { VercelKeyStatus } from "./services/vercel-key";
+export { getVercelKeyConfigured, saveVercelApiKey, dispatchDeploymentViaServer } from "./services/vercel-key";
+export type { VercelKeyStatus, DispatchDeploymentParams } from "./services/vercel-key";
 export type { ConnectionMonitorCallbacks, SessionRecord, SessionSummary, StreamCallbacks, StreamMessage, StreamOptions, StreamUsage } from "./services/hermes";
 export {
   DirectGitHubTransport,

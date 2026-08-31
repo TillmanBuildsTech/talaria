@@ -12,6 +12,7 @@ import {
   projectsDocsHome,
 } from "./projects-docs.mjs";
 import { serveVercelKey } from "./vercel-key.mjs";
+import { serveDeployDispatch } from "./deploy-dispatch.mjs";
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
@@ -110,6 +111,62 @@ export default defineConfig(({ mode }) => {
     },
   });
 
+  // Server-side GitHub proxy for the Vite dev server — mirrors serve.mjs's
+  // githubProxyFactory. The dev server proxies /api to the gateway (localhost:8642),
+  // so the dispatch path calls the gateway's github proxy directly with the
+  // browser's Authorization header. The stored Vercel key never reaches the browser.
+  const gatewayOrigin = "http://localhost:8642";
+  const githubProxyDev = (authHeader: string | undefined) => async ({
+    method,
+    path,
+    body,
+  }: {
+    method: string;
+    path: string;
+    body?: unknown;
+  }) => {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (authHeader) headers.Authorization = authHeader;
+    const res = await fetch(`${gatewayOrigin}/api/v1/github/proxy`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ method, path, body: body ?? {} }),
+    });
+    let data: Record<string, unknown> = {};
+    try {
+      data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    } catch {
+      data = {};
+    }
+    return { ok: res.ok, status: res.status, data };
+  };
+
+  // Serve the deployment dispatch on the Vite dev server — the server-side path
+  // that reads the stored Vercel key and injects it into workflow_dispatch
+  // inputs (only when the workflow declares a vercel_token input).
+  const serveDeployDispatchDev = () => ({
+    name: "serve-deploy-dispatch",
+    configureServer(server: { middlewares: { use: (fn: (req: IncomingMessage, res: ServerResponse, next: () => void) => void) => void } }) {
+      server.middlewares.use((req, res, next) => {
+        if (req.url?.split("?")[0] === "/api/deployments/dispatch") {
+          if (req.method === "OPTIONS") {
+            res.writeHead(204).end();
+            return;
+          }
+          if (req.method !== "POST") {
+            res.writeHead(405, { "Content-Type": "application/json" }).end(JSON.stringify({ error: "method not allowed" }));
+            return;
+          }
+          void serveDeployDispatch(req, res, {
+            githubProxy: githubProxyDev(req.headers.authorization),
+          });
+          return;
+        }
+        next();
+      });
+    },
+  });
+
   return {
     define: {
       __HERMES_API_KEY__: JSON.stringify(env.HERMES_API_KEY || process.env.HERMES_API_KEY || ""),
@@ -118,6 +175,7 @@ export default defineConfig(({ mode }) => {
       serveTalariaConfigDev(),
       serveProjectsDocsDev(),
       serveVercelKeyDev(),
+      serveDeployDispatchDev(),
       devBasicAuth(),
       react(),
       tailwindcss(),

@@ -5,6 +5,7 @@ import db, {
   type GitHubConnectionType,
 } from "../db";
 import { hermesClient } from "../services/hermes";
+import { dispatchDeploymentViaServer } from "../services/vercel-key";
 import {
   DirectGitHubTransport,
   GatewayGitHubTransport,
@@ -339,7 +340,20 @@ export const useGitHubStore = create<GitHubState>((set, get) => ({
 
     // Fire the dispatch — GitHub returns 204 with no body and no run id, so we
     // watch for the run it creates by listing runs on the ref.
-    await githubClient.dispatchWorkflow(owner, repo, workflowId, { ref, inputs });
+    //
+    // Web path: route through the server endpoint (serve.mjs + Vite dev) so the
+    // stored Vercel API key is injected into the workflow inputs server-side
+    // (never reaching the browser). The server forwards to the gateway proxy,
+    // which attaches the GitHub token. Desktop has no server-side key store, so
+    // it keeps the direct dispatch via the local GitHub token.
+    if (get().platform === "web") {
+      await dispatchDeploymentViaServer(
+        { owner, repo, workflowId, ref, inputs: inputs || {} },
+        hermesClient.apiKey
+      );
+    } else {
+      await githubClient.dispatchWorkflow(owner, repo, workflowId, { ref, inputs });
+    }
 
     // Poll (a few quick tries) for the run this dispatch created: the newest
     // workflow_dispatch run on the ref with the matching workflow name.
