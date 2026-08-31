@@ -4,6 +4,7 @@ import { githubClient } from "../services/github";
 import { useGitHubStore } from "../stores/github";
 import { useReposStore } from "../stores/repos";
 import { usePrsStore } from "../stores/prs";
+import { useProjectsStore } from "../stores/projects";
 import { NavRail } from "./nav-rail";
 import { WipView } from "./wip-view";
 
@@ -67,6 +68,7 @@ beforeEach(() => {
     lastRefreshedAt: null,
   });
   useGitHubStore.setState({ connections: [CONN] as never });
+  useProjectsStore.setState({ projects: [], activeProjectId: null, loaded: false } as never);
 });
 
 describe("NavRail — single WIP entry (AC1)", () => {
@@ -183,6 +185,22 @@ describe("WipView — combined repo + PR rendering (AC2, AC4, AC8)", () => {
     await screen.findByText("tillmanbuildstech/talaria");
     fireEvent.change(screen.getByLabelText("Filter repos"), { target: { value: "zzz-none" } });
     expect(screen.getByText("No repos match.")).toBeInTheDocument();
+  });
+
+  it("renders 'No accessible repos.' when the repos list is empty (AC7 #2)", async () => {
+    listReposSpy.mockResolvedValue([] as never);
+    listPullRequestsSpy.mockResolvedValue([] as never);
+    render(<WipView />);
+    expect(await screen.findByText("No accessible repos.")).toBeInTheDocument();
+    expect(screen.queryByText("No accessible repos for this project scope.")).not.toBeInTheDocument();
+  });
+
+  it("renders the project-scoped empty state when a project is active (AC7 #2)", async () => {
+    listReposSpy.mockResolvedValue([] as never);
+    listPullRequestsSpy.mockResolvedValue([] as never);
+    useProjectsStore.setState({ projects: [{ id: "p1", name: "Scraper" }] as never, activeProjectId: "p1" });
+    render(<WipView />);
+    expect(await screen.findByText("No accessible repos for this project scope.")).toBeInTheDocument();
   });
 
   it("renders 'No open pull requests.' for an expanded repo with none (AC7 #3)", async () => {
