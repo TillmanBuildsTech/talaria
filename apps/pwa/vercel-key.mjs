@@ -30,6 +30,7 @@ import {
   createDecipheriv,
   createHash,
   randomBytes,
+  timingSafeEqual,
 } from 'node:crypto'
 import {
   chmodSync,
@@ -39,6 +40,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { join } from 'node:path'
+import { readApiServerKey } from './talaria-config.mjs'
 
 // Resolve the REAL Hermes home root (unwraps a profile-scoped HERMES_HOME to
 // the parent root, mirroring talaria-config.mjs / serve.mjs kanbanHome()).
@@ -165,21 +167,64 @@ function sendJson(res, status, obj) {
   res.end(JSON.stringify(obj))
 }
 
+// ── Write auth ──────────────────────────────────────────────────────────────
+//
+// The PUT overwrites a stored credential, so it must not be callable by
+// anyone who can reach the port. We gate it behind the SAME Bearer key the app
+// already uses to authenticate every other /api request (the Hermes gateway
+// API_SERVER_KEY / base key). That keeps one auth model across the surface:
+// the browser sends `Authorization: Bearer <baseKey>` exactly as it does for
+// /api/v1 chat etc. GET stays open (it returns only { configured }, never the
+// key). The expected key is resolved the same way buildTalariaConfig resolves
+// `base` (host .env → TALARIA_BASE_KEY fallback for container deployments).
+
+// Constant-time compare of two strings (length checked first so timingSafeEqual
+// never throws on a size mismatch — a plain !== would also work, but this
+// avoids early-exit length timing).
+function safeEqual(a, b) {
+  const ab = Buffer.from(String(a), 'utf8')
+  const bb = Buffer.from(String(b), 'utf8')
+  if (ab.length !== bb.length) return false
+  return timingSafeEqual(ab, bb)
+}
+
+// The Bearer key that authorizes writes. Resolved from the host env exactly
+// like the base key the app is provisioned with (see buildTalariaConfig).
+function expectedWriteKey({ home = hermesHomeRoot(), env = process.env } = {}) {
+  return readApiServerKey(join(home, '.env')) || env.TALARIA_BASE_KEY || ''
+}
+
+// True when the request carries the expected Bearer key on its PUT.
+export function vercelKeyWriteAuthorized(req, opts) {
+  const header = req.headers?.authorization || ''
+  const m = header.match(/^Bearer\s+(\S+)$/)
+  if (!m) return false
+  const expected = expectedWriteKey(opts)
+  return !!expected && safeEqual(m[1], expected)
+}
+
 // HTTP surface for the browser (used by serve.mjs AND the Vite dev middleware):
 //   GET /api/deployments/vercel-key  -> { configured: true|false }
 //   PUT /api/deployments/vercel-key  body { apiKey }  -> { configured: true }
 // The full key is never present in any response. OPTIONS is answered for CORS.
-export async function serveVercelKey(req, res) {
+// `opts` is the same shape the module's pure functions take ({ home, env }),
+// used by tests to isolate storage + auth to a temp home; production callers
+// omit it and get the real host paths.
+export async function serveVercelKey(req, res, opts = {}) {
   const method = req.method
   if (method === 'OPTIONS') {
     res.writeHead(204).end()
     return
   }
   if (method === 'GET') {
-    sendJson(res, 200, { configured: vercelKeyConfigured() })
+    sendJson(res, 200, { configured: vercelKeyConfigured(opts) })
     return
   }
   if (method === 'PUT') {
+    // Writes are gated behind the gateway Bearer key (same auth as /api).
+    if (!vercelKeyWriteAuthorized(req, opts)) {
+      return sendJson(res, 401, { error: 'unauthorized' })
+    }
     let body = ''
     try {
       for await (const chunk of req) body += chunk
@@ -197,7 +242,7 @@ export async function serveVercelKey(req, res) {
       return sendJson(res, 400, { error: 'apiKey is required' })
     }
     try {
-      setVercelApiKey(apiKey)
+      setVercelApiKey(apiKey, opts)
     } catch (err) {
       return sendJson(res, 500, { error: err instanceof Error ? err.message : 'could not store key' })
     }

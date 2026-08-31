@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useGitHubStore } from "../stores/github";
 import { useReposStore } from "../stores/repos";
+import { useChatStore } from "../stores/chat";
 import { getVercelKeyConfigured, saveVercelApiKey } from "../services/vercel-key";
 import { GitRepoNotice } from "./git-repo-notice";
 import { VercelKeyPrompt } from "./vercel-key-prompt";
@@ -236,6 +237,9 @@ export function Deployments({ owner, repo, project }: DeploymentsProps) {
   const listDispatchableWorkflows = useGitHubStore((s) => s.listDispatchableWorkflows);
   const dispatchDeployment = useGitHubStore((s) => s.dispatchDeployment);
   const refreshDeployment = useGitHubStore((s) => s.refreshDeployment);
+  // The base Hermes API key the app was provisioned with — the same Bearer key
+  // used for every other /api request. Required to authorize the Vercel-key PUT.
+  const baseApiKey = useChatStore((s) => s.apiKey);
 
   // Whole-app project scoping (P9): when a project is active, scope the trigger
   // to that project's ATTACHED repo rather than a hardcoded default. Global
@@ -388,7 +392,7 @@ export function Deployments({ owner, repo, project }: DeploymentsProps) {
     setKeyBusy(true);
     setKeyError(null);
     try {
-      await saveVercelApiKey(apiKey);
+      await saveVercelApiKey(apiKey, baseApiKey);
       setKeyConfigured(true);
       setKeyChecked(true);
       setShowKeyPrompt(false);

@@ -9,8 +9,12 @@
 //
 // This client exposes exactly those two operations to the Deployments UI so it
 // can gate "trigger deployment" behind "a default Vercel API key is stored".
-// It is same-origin (serve.mjs + the Vite dev middleware both serve it), so no
-// gateway auth header is needed — mirroring the /talaria-config fetch pattern.
+// It is same-origin (serve.mjs + the Vite dev middleware both serve it).
+//
+// Auth: GET needs nothing (it only returns `configured`). PUT overwrites a
+// stored credential, so the server requires the SAME gateway Bearer key the
+// app already uses for every other /api request — pass `authKey` (the base
+// Hermes API key the app was provisioned with) so the write is authorized.
 
 // Shape of the GET response. The server only ever reports `configured` —
 // the key itself is never transmitted to the browser.
@@ -34,13 +38,18 @@ export async function getVercelKeyConfigured(
 }
 
 // PUT — store the pasted key as the default. The response never echoes it.
+// `authKey` is the gateway Bearer key (base Hermes API key) that authorizes
+// the write — same auth model as the rest of /api.
 export async function saveVercelApiKey(
   apiKey: string,
+  authKey: string | null | undefined,
   fetchImpl: typeof fetch = fetch.bind(globalThis as typeof globalThis & Window)
 ): Promise<void> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (authKey) headers.Authorization = `Bearer ${authKey}`;
   const res = await fetchImpl(VERCEL_KEY_URL, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({ apiKey }),
   });
   if (!res.ok) {
