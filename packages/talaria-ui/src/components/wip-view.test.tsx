@@ -193,4 +193,52 @@ describe("WipView — combined repo + PR rendering (AC2, AC4, AC8)", () => {
     fireEvent.click(within(row as HTMLElement).getByRole("button"));
     expect(await screen.findByText("No open pull requests.")).toBeInTheDocument();
   });
+
+  it("Refresh re-fetches repos and open-PR counts for every repo (AC4)", async () => {
+    let talariaCalls = 0;
+    listReposSpy.mockResolvedValue(REPOS as never);
+    listPullRequestsSpy.mockImplementation(async (owner, repo) => {
+      if (owner === "tillmanbuildstech" && repo === "talaria") {
+        talariaCalls += 1;
+        return [
+          { number: 1, title: "Refreshed PR", user: { login: "brandon" }, head: { ref: "a" }, base: { ref: "main" }, state: "open", draft: false, html_url: "https://github.com/tillmanbuildstech/talaria/pull/1" },
+        ] as never;
+      }
+      return [];
+    });
+
+    render(<WipView />);
+    await screen.findByText("tillmanbuildstech/talaria");
+    await waitFor(() => expect(screen.getByText("1 PR")).toBeInTheDocument());
+    expect(talariaCalls).toBe(1);
+
+    // Baseline repo reloads on mount: init()→refreshRepos and the loadRepos
+    // effect both hit listRepos. Record the count before pressing Refresh.
+    const reposBefore = listReposSpy.mock.calls.length;
+
+    // Press Refresh → repo list reloads AND every repo's open-PR count is
+    // re-fetched (listPullRequests fires again), not just re-read from cache.
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+
+    await waitFor(() => expect(listReposSpy.mock.calls.length).toBe(reposBefore + 1));
+    await waitFor(() => expect(talariaCalls).toBe(2));
+    // Count chip still rendered after refresh.
+    expect(await screen.findByText("1 PR")).toBeInTheDocument();
+  });
+
+  it("Refresh is disabled while a refresh is in flight (AC4)", async () => {
+    listReposSpy.mockResolvedValue(REPOS as never);
+    listPullRequestsSpy.mockResolvedValue([] as never);
+
+    render(<WipView />);
+    await screen.findByText("tillmanbuildstech/talaria");
+
+    const refreshBtn = screen.getByRole("button", { name: "Refresh" });
+    fireEvent.click(refreshBtn);
+    // setRefreshing(true) runs synchronously before loadRepos awaits, so the
+    // button is disabled as soon as the click is processed.
+    expect(refreshBtn).toBeDisabled();
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Refresh" })).not.toBeDisabled());
+  });
 });
