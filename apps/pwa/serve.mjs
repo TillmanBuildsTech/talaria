@@ -25,6 +25,8 @@ import {
   sendProjectsDocsResult,
   readJsonBody,
 } from './projects-docs.mjs'
+import { serveVercelKey } from './vercel-key.mjs'
+import { serveDeployDispatch } from './deploy-dispatch.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const DIST = join(__dirname, 'dist')
@@ -365,6 +367,51 @@ function forwardGateway(req, res, path) {
   req.pipe(upReq)
 }
 
+// Server-side GitHub proxy call — used by the deployment dispatch path. Forwards
+// a { method, path, body } request to the gateway's /api/v1/github/proxy so the
+// gateway attaches the stored GitHub token (the browser's Authorization header,
+// the gateway API key, is forwarded verbatim). Returns { ok, status, data }.
+// The dispatch path runs on the server (not the browser) so it can read the
+// stored Vercel API key without ever sending it to the client.
+function githubProxyFactory(authHeader) {
+  return function githubProxy({ method, path, body }) {
+    return new Promise((resolve) => {
+      const payload = JSON.stringify({ method, path, body: body ?? {} })
+      const headers = {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload),
+      }
+      if (authHeader) headers['authorization'] = authHeader
+      headers['host'] = GATEWAY_HOST
+      const upReq = gatewayRequest(
+        { host: GATEWAY.hostname, port: GATEWAY_PORT, path: '/api/v1/github/proxy', method: 'POST', headers },
+        (upRes) => {
+          let chunks = ''
+          upRes.setEncoding('utf8')
+          upRes.on('data', (c) => (chunks += c))
+          upRes.on('end', () => {
+            let data = {}
+            try {
+              data = chunks ? JSON.parse(chunks) : {}
+            } catch {
+              data = { message: chunks.slice(0, 200) }
+            }
+            resolve({
+              ok: upRes.statusCode >= 200 && upRes.statusCode < 300,
+              status: upRes.statusCode || 502,
+              data,
+            })
+          })
+        }
+      )
+      upReq.on('error', () => {
+        resolve({ ok: false, status: 502, data: { message: 'Gateway unavailable' } })
+      })
+      upReq.end(payload)
+    })
+  }
+}
+
 createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://x')
@@ -413,6 +460,31 @@ createServer(async (req, res) => {
         HERMES_HOME
       )
       if (sendProjectsDocsResult(res, result)) return
+    }
+
+    // 0.8) Vercel API-key store — server-side, encrypted at rest. Served
+    // locally (this server hosts the key) so the raw key never reaches the
+    // gateway or the browser. GET returns { configured }, PUT stores it.
+    if (url.pathname === '/api/deployments/vercel-key') {
+      await serveVercelKey(req, res)
+      return
+    }
+
+    // 0.85) Deployment dispatch — server-side path that reads the stored Vercel
+    // API key and injects it into the workflow_dispatch inputs (only when the
+    // target workflow declares a `vercel_token` input). Forwards to the gateway
+    // GitHub proxy with the browser's Authorization header so the gateway
+    // attaches the GitHub token. The key never reaches the browser.
+    if (url.pathname === '/api/deployments/dispatch') {
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204).end()
+        return
+      }
+      if (req.method !== 'POST') return sendJson(res, 405, { error: 'method not allowed' })
+      await serveDeployDispatch(req, res, {
+        githubProxy: githubProxyFactory(req.headers.authorization),
+      })
+      return
     }
 
     // 1) Gateway API path (chat /v1, sessions /api, multiplex /p) → proxy
