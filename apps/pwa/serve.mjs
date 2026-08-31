@@ -396,6 +396,59 @@ async function serveKanban(req, res, url) {
   return sendJson(res, 404, { error: 'not found' })
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// Host directory listing — lets the web folder picker browse the host
+// filesystem to pick a project's folder (project ↔ folder/repo tie, P9).
+//   GET /api/v1/host/directory?path=<path> → { path, entries:[{name,isDir,isGitRepo}] }
+// Mirrors the desktop native adapter (DocsFileSystem.listDir + git peek) so
+// both shells reach the SAME host directory. Runs locally (this server lives
+// on the Hermes host) rather than being proxied to the gateway.
+// ───────────────────────────────────────────────────────────────────────────
+
+// Expand a picker path into a safe absolute host path. `~` resolves to HOME
+// (matches the desktop adapter, which reads relative to the user's home). Path
+// traversal (".." segments) is rejected, and the resolved path is constrained
+// to within the user's home — the same ceiling the desktop adapter and the
+// picker's up-navigation enforce. Returns null for unsafe/invalid input.
+function resolveHostDir(path) {
+  const raw = (path || '').trim()
+  if (!raw) return null
+  // Reject traversal on the RAW value first (before ~ expansion, so a crafted
+  // "~/../etc" cannot slip through once ".." has been consumed by join).
+  if (raw.split('/').includes('..')) return null
+  const home = process.env.HOME || (HERMES_HOME && dirname(HERMES_HOME)) || '/root'
+  let expanded = raw
+  if (expanded === '~') expanded = home
+  else if (expanded.startsWith('~/')) expanded = join(home, expanded.slice(2))
+  const cleaned = expanded.replace(/\/+/g, '/').replace(/\/$/, '')
+  if (!cleaned) return null
+  const abs = cleaned.startsWith('/') ? cleaned : join(home, cleaned)
+  // Constrain to within the user's home (matches the desktop adapter, which
+  // reads relative to BaseDirectory.Home). Prevents escaping the base.
+  if (abs !== home && !abs.startsWith(home + '/')) return null
+  return abs
+}
+
+// List one directory: { name, isDir } per entry, flagging subdirectories that
+// are git repo roots (have a .git file or dir). Non-existent / unreadable
+// paths yield 404 so the picker surfaces a clean error.
+function serveHostDirectory(res, url) {
+  const target = resolveHostDir(url.searchParams.get('path'))
+  if (!target) return sendJson(res, 400, { error: 'invalid path' })
+  let entries
+  try {
+    const children = readdirSync(target, { withFileTypes: true })
+    entries = children.map((e) => {
+      if (!e.isDirectory()) return { name: e.name, isDir: false }
+      const isGitRepo = existsSync(join(target, e.name, '.git'))
+      return { name: e.name, isDir: true, isGitRepo }
+    })
+  } catch (err) {
+    return sendJson(res, 404, { error: err.code === 'ENOENT' ? `no such directory: ${target}` : String(err.message || err) })
+  }
+  return sendJson(res, 200, { path: target, entries })
+}
+
 // Forward a gateway-path request upstream, dropping browser origins the
 // gateway rejects. A leading "/api/v1" (the pre-sync app path) is rewritten to
 // "/v1" for backward compat with service-worker-cached bundles.
@@ -444,6 +497,17 @@ createServer(async (req, res) => {
         return
       }
       await serveKanban(req, res, url)
+      return
+    }
+
+    // 0.75) Host directory listing — web folder picker (local, host-fs)
+    if (url.pathname === '/api/v1/host/directory') {
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204).end()
+        return
+      }
+      if (req.method !== 'GET') return sendJson(res, 405, { error: 'method not allowed' })
+      serveHostDirectory(res, url)
       return
     }
 
