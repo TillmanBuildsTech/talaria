@@ -267,7 +267,6 @@ export function Deployments({ owner, repo, project }: DeploymentsProps) {
   // key is stored server-side; if it isn't, show the key prompt and continue the
   // pending dispatch after a successful save. The GET/PUT live on the same
   // origin as the app (serve.mjs + Vite dev), so no gateway auth is needed.
-  const [keyChecked, setKeyChecked] = useState(false);
   const [keyConfigured, setKeyConfigured] = useState(false);
   const [showKeyPrompt, setShowKeyPrompt] = useState(false);
   const [keyUpdating, setKeyUpdating] = useState(false);
@@ -328,7 +327,6 @@ export function Deployments({ owner, repo, project }: DeploymentsProps) {
       }
       if (!cancelled) {
         setKeyConfigured(configured);
-        setKeyChecked(true);
       }
     })();
     return () => {
@@ -364,18 +362,19 @@ export function Deployments({ owner, repo, project }: DeploymentsProps) {
   }
 
   // Gate: deployments must not start without a stored default Vercel API key.
+  // Always re-verify configuration FRESH at dispatch time — never trust the
+  // mount-time `keyConfigured` snapshot (VAL-F11). The key could have been
+  // cleared or rotated between mount and this click, and the stale value would
+  // otherwise let a dispatch fire against a key that no longer exists.
   async function handleDispatch(workflowId: number, workflowName: string, ref: string, inputs: Record<string, string>) {
     if (keyBusy) return; // avoid duplicate submissions while a save is in flight
-    let configured = keyConfigured;
-    if (!keyChecked) {
-      try {
-        configured = await getVercelKeyConfigured();
-      } catch {
-        configured = false;
-      }
-      setKeyConfigured(configured);
-      setKeyChecked(true);
+    let configured: boolean;
+    try {
+      configured = await getVercelKeyConfigured();
+    } catch {
+      configured = false;
     }
+    setKeyConfigured(configured);
     if (!configured) {
       // Stash the dispatch so it continues after the key is saved.
       setPendingDispatch({ workflowId, workflowName, ref, inputs });
@@ -394,7 +393,6 @@ export function Deployments({ owner, repo, project }: DeploymentsProps) {
     try {
       await saveVercelApiKey(apiKey, baseApiKey);
       setKeyConfigured(true);
-      setKeyChecked(true);
       setShowKeyPrompt(false);
       const pending = pendingDispatch;
       setPendingDispatch(null);

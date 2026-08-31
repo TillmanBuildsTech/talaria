@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync, readFileSync, statSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -8,6 +8,7 @@ import {
   getVercelApiKey,
   setVercelApiKey,
   vercelKeyConfigured,
+  validateVercelApiKey,
   hermesHomeRoot,
   serveVercelKey,
   vercelKeyWriteAuthorized,
@@ -20,6 +21,9 @@ function makeHome(): string {
 
 // Deterministic 32-byte test key (hex = 64 chars).
 const TEST_KEY = Buffer.from("0123456789abcdef".repeat(4), "hex");
+
+// A plausible-length Vercel API token (>= the 20-char validation floor).
+const VALID_KEY = "vercel-token-0123456789abcdefghij";
 
 // Build a mock node:http IncomingMessage for serveVercelKey. `body` is pushed
 // as the async-iterable body (serveVercelKey reads it for PUT).
@@ -81,26 +85,26 @@ describe("vercel-key shared module", () => {
     const home = makeHome();
     expect(vercelKeyConfigured({ home })).toBe(false);
     expect(getVercelApiKey({ home })).toBeNull();
-    setVercelApiKey("vercel-token-xyz", { home });
+    setVercelApiKey(VALID_KEY, { home });
     expect(vercelKeyConfigured({ home })).toBe(true);
     // Server-side read returns the full key (deployment code), never exposed to browser.
-    expect(getVercelApiKey({ home })).toBe("vercel-token-xyz");
+    expect(getVercelApiKey({ home })).toBe(VALID_KEY);
     rmSync(home, { recursive: true, force: true });
   });
 
   it("persists encrypted-at-rest: the on-disk payload never contains the plaintext", () => {
     const home = makeHome();
-    setVercelApiKey("super-secret-token", { home });
+    setVercelApiKey("super-secret-token-0123456789abcdefghij", { home });
     const payload = readFileSync(join(home, "talaria", "vercel-key.json"), "utf8");
-    expect(payload).not.toContain("super-secret-token");
+    expect(payload).not.toContain("super-secret-token-0123456789abcdefghij");
     rmSync(home, { recursive: true, force: true });
   });
 
   it("setVercelApiKey replaces an existing key", () => {
     const home = makeHome();
-    setVercelApiKey("first", { home });
-    setVercelApiKey("second", { home });
-    expect(getVercelApiKey({ home })).toBe("second");
+    setVercelApiKey(`${VALID_KEY}-a`, { home });
+    setVercelApiKey(`${VALID_KEY}-b`, { home });
+    expect(getVercelApiKey({ home })).toBe(`${VALID_KEY}-b`);
     rmSync(home, { recursive: true, force: true });
   });
 
@@ -113,11 +117,62 @@ describe("vercel-key shared module", () => {
 
   it("master key file is created with 0600 perms", () => {
     const home = makeHome();
-    setVercelApiKey("token", { home });
+    setVercelApiKey(VALID_KEY, { home });
     const keyPath = join(home, "talaria", ".master.key");
     expect(readFileSync(keyPath, "utf8").length).toBeGreaterThan(0);
     const stat = statSync(keyPath);
     expect(stat.mode & 0o777).toBe(0o600);
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  // ── Key format validation (VAL-F9) ────────────────────────────────────────
+
+  it("validateVercelApiKey accepts a plausible token and rejects typos", () => {
+    expect(validateVercelApiKey(VALID_KEY)).toBeNull();
+    // Too short (below the 20-char floor) → rejected so a truncated/typo'd paste fails at save.
+    expect(validateVercelApiKey("short")).toMatch(/too short/i);
+    // Blank → required.
+    expect(validateVercelApiKey("")).toMatch(/required/i);
+    expect(validateVercelApiKey("   ")).toMatch(/required/i);
+    // Whitespace inside the token → rejected.
+    expect(validateVercelApiKey("vercel token 0123456789abcdefghij")).toMatch(/whitespace/i);
+    // URL-like / characters Vercel tokens never contain → rejected.
+    expect(validateVercelApiKey("https://vercel.com/token/0123456789abc")).toMatch(/unsupported/i);
+  });
+
+  it("setVercelApiKey rejects a too-short key instead of storing it as configured", () => {
+    const home = makeHome();
+    expect(() => setVercelApiKey("tiny", { home })).toThrow(/too short/i);
+    // Nothing stored.
+    expect(getVercelApiKey({ home })).toBeNull();
+    expect(vercelKeyConfigured({ home })).toBe(false);
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  // ── No-decrypt configured check (SEC-F3) ──────────────────────────────────
+  // vercelKeyConfigured must answer "is there a stored key?" WITHOUT running a
+  // full AES-256-GCM decrypt on every GET. It should reflect bundle presence
+  // and treat a tampered / migrated (unparseable or enc-less) payload as "not
+  // configured".
+
+  it("vercelKeyConfigured is true when a bundle with enc exists, false on a missing/enc-less payload", () => {
+    const home = makeHome();
+    setVercelApiKey(VALID_KEY, { home });
+    expect(vercelKeyConfigured({ home })).toBe(true);
+    // A payload that exists but has no `enc` (e.g. migrated/legacy shape) → not configured.
+    writeFileSync(join(home, "talaria", "vercel-key.json"), JSON.stringify({ foo: "bar" }));
+    expect(vercelKeyConfigured({ home })).toBe(false);
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it("vercelKeyConfigured treats a tampered (unparseable) payload as not configured", () => {
+    const home = makeHome();
+    setVercelApiKey(VALID_KEY, { home });
+    // Corrupt the JSON on disk (simulates tampering / partial write).
+    writeFileSync(join(home, "talaria", "vercel-key.json"), "{ not json !!");
+    // The cheap gate must not throw, and reports not-configured.
+    expect(() => vercelKeyConfigured({ home })).not.toThrow();
+    expect(vercelKeyConfigured({ home })).toBe(false);
     rmSync(home, { recursive: true, force: true });
   });
 
@@ -170,7 +225,7 @@ describe("vercel-key shared module", () => {
     const home = makeHome();
     const { res, out } = mockRes();
     await serveVercelKey(
-      mockReq("PUT", { "Content-Type": "application/json" }, JSON.stringify({ apiKey: "vercel-xyz" })),
+      mockReq("PUT", { "Content-Type": "application/json" }, JSON.stringify({ apiKey: VALID_KEY })),
       res,
       { home, env: AUTH_ENV }
     );
@@ -185,7 +240,7 @@ describe("vercel-key shared module", () => {
     const home = makeHome();
     const { res, out } = mockRes();
     await serveVercelKey(
-      mockReq("PUT", { authorization: "Bearer wrong", "Content-Type": "application/json" }, JSON.stringify({ apiKey: "vercel-xyz" })),
+      mockReq("PUT", { authorization: "Bearer wrong", "Content-Type": "application/json" }, JSON.stringify({ apiKey: VALID_KEY })),
       res,
       { home, env: AUTH_ENV }
     );
@@ -198,26 +253,56 @@ describe("vercel-key shared module", () => {
     const home = makeHome();
     const { res, out } = mockRes();
     await serveVercelKey(
-      mockReq("PUT", { authorization: "Bearer base-key-123", "Content-Type": "application/json" }, JSON.stringify({ apiKey: "vercel-xyz" })),
+      mockReq("PUT", { authorization: "Bearer base-key-123", "Content-Type": "application/json" }, JSON.stringify({ apiKey: VALID_KEY })),
       res,
       { home, env: AUTH_ENV }
     );
     expect(out.status).toBe(200);
     expect(out.body).toEqual({ configured: true });
     // Stored server-side; response never contains the raw key.
-    expect(getVercelApiKey({ home })).toBe("vercel-xyz");
-    expect(JSON.stringify(out.body)).not.toContain("vercel-xyz");
+    expect(getVercelApiKey({ home })).toBe(VALID_KEY);
+    expect(JSON.stringify(out.body)).not.toContain(VALID_KEY);
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it("serveVercelKey PUT rejects a too-short key with 400 (VAL-F9)", async () => {
+    const home = makeHome();
+    const { res, out } = mockRes();
+    await serveVercelKey(
+      mockReq("PUT", { authorization: "Bearer base-key-123", "Content-Type": "application/json" }, JSON.stringify({ apiKey: "tiny" })),
+      res,
+      { home, env: AUTH_ENV }
+    );
+    expect(out.status).toBe(400);
+    expect((out.body as any).error).toMatch(/too short/i);
+    expect(getVercelApiKey({ home })).toBeNull();
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it("serveVercelKey PUT rejects an oversized body with 413 (SEC-F4)", async () => {
+    const home = makeHome();
+    const { res, out } = mockRes();
+    // A body well over the 4 KB cap.
+    const big = "x".repeat(16 * 1024);
+    await serveVercelKey(
+      mockReq("PUT", { authorization: "Bearer base-key-123", "Content-Type": "application/json" }, JSON.stringify({ apiKey: big })),
+      res,
+      { home, env: AUTH_ENV }
+    );
+    expect(out.status).toBe(413);
+    expect((out.body as any).error).toMatch(/too large/i);
+    expect(getVercelApiKey({ home })).toBeNull();
     rmSync(home, { recursive: true, force: true });
   });
 
   it("serveVercelKey GET stays open and returns only { configured }", async () => {
     const home = makeHome();
-    setVercelApiKey("vercel-xyz", { home });
+    setVercelApiKey(VALID_KEY, { home });
     const { res, out } = mockRes();
     await serveVercelKey(mockReq("GET", {}), res, { home, env: AUTH_ENV });
     expect(out.status).toBe(200);
     expect(out.body).toEqual({ configured: true });
-    expect(JSON.stringify(out.body)).not.toContain("vercel-xyz");
+    expect(JSON.stringify(out.body)).not.toContain(VALID_KEY);
     rmSync(home, { recursive: true, force: true });
   });
 });
