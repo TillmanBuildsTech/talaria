@@ -399,7 +399,6 @@ export function Deployments({ owner, repo, project }: DeploymentsProps) {
     try {
       await saveVercelApiKey(apiKey, baseApiKey);
       setKeyConfigured(true);
-      setKeyChecked(true);
     } catch (err) {
       setKeyError(err instanceof Error ? err.message : "Could not save Vercel API key");
       setKeyBusy(false);

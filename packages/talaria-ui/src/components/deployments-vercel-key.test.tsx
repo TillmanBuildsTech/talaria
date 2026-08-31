@@ -58,7 +58,9 @@ async function triggerDeploymentWithNewKey() {
   fireEvent.change(screen.getByLabelText(/Workflow/i), { target: { value: "1" } });
   fireEvent.change(screen.getByLabelText(/Branch \/ ref/i), { target: { value: "main" } });
   fireEvent.click(screen.getByText(/^Dispatch$/i)); // no key stored -> gate trips -> prompt
-  fireEvent.change(screen.getByPlaceholderText(/Paste Vercel API key/i), {
+  // VAL-F11: the gate re-verifies config FRESH at dispatch time (async), so the
+  // prompt renders a tick after the click — await it.
+  fireEvent.change(await screen.findByPlaceholderText(/Paste Vercel API key/i), {
     target: { value: "vercel-token-xyz" },
   });
   fireEvent.click(screen.getByText(/Save & continue/i));
