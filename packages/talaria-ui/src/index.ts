@@ -24,6 +24,7 @@ export { ProjectPicker } from "./components/project-picker";
 export { ProjectSettingsDialog } from "./components/project-settings-dialog";
 export { FolderPicker } from "./components/folder-picker";
 export type { PickedFolder } from "./components/folder-picker";
+export { GitRepoNotice } from "./components/git-repo-notice";
 export { PullRequestDetail } from "./components/pull-request-detail";
 export { PullRequestList } from "./components/pull-request-list";
 export { RepoBrowser } from "./components/repo-browser";
