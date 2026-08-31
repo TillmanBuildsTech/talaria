@@ -85,6 +85,11 @@ export default defineConfig(({ mode }) => {
         "/v1": { target: "http://localhost:8642", changeOrigin: true, configure: (p) => p.on("proxyReq", stripBrowserHeaders) },
         "/p": { target: "http://localhost:8642", changeOrigin: true, configure: (p) => p.on("proxyReq", stripBrowserHeaders) },
         "/api": { target: "http://localhost:8642", changeOrigin: true, configure: (p) => p.on("proxyReq", stripBrowserHeaders) },
+        // Kanban bridge → serve.mjs (NOT the gateway; the gateway 404s on
+        // /kanban-api). serve.mjs reads the per-project board SQLite directly.
+        // Without this entry the Vite dev server answers /kanban-api with SPA
+        // HTML / 404 and the Command Center loads no tasks.
+        "/kanban-api": { target: "http://localhost:8643", changeOrigin: true },
       },
     },
   };
