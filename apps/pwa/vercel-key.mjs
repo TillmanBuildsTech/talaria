@@ -130,12 +130,39 @@ function writeBundle(home, bundle) {
 
 // ── Public API (server-side) ────────────────────────────────────────────────
 
+// Basic sanity validation for a pasted Vercel API token, so a typo'd or
+// truncated value is rejected at save time instead of stored as "configured".
+// Vercel access tokens are opaque alphanumeric strings (typically 20+ chars,
+// no whitespace), so this deliberately-permissive check only catches obvious
+// mistakes — whitespace, URL-like text, or implausibly short/long values — and
+// never a real token. Returns an error string, or null when the value looks
+// plausible.
+const VERCEL_KEY_MIN_LENGTH = 20
+const VERCEL_KEY_MAX_LENGTH = 512
+const VERCEL_KEY_CHARS = /^[A-Za-z0-9_.-]+$/
+export function validateVercelApiKey(value) {
+  const trimmed = String(value ?? '').trim()
+  if (!trimmed) return 'apiKey is required'
+  if (trimmed.length < VERCEL_KEY_MIN_LENGTH) {
+    return `apiKey looks too short (min ${VERCEL_KEY_MIN_LENGTH} chars)`
+  }
+  if (trimmed.length > VERCEL_KEY_MAX_LENGTH) {
+    return `apiKey exceeds ${VERCEL_KEY_MAX_LENGTH} chars`
+  }
+  if (/\s/.test(trimmed)) return 'apiKey must not contain whitespace'
+  if (!VERCEL_KEY_CHARS.test(trimmed)) {
+    return 'apiKey contains unsupported characters'
+  }
+  return null
+}
+
 // Replace the default Vercel API key. Returns { configured: true } once stored.
 export function setVercelApiKey(apiKey, opts = {}) {
   const home = opts.home || hermesHomeRoot(opts.env || process.env)
   const env = opts.env || process.env
   const trimmed = String(apiKey || '').trim()
-  if (!trimmed) throw new Error('apiKey is required')
+  const invalid = validateVercelApiKey(trimmed)
+  if (invalid) throw new Error(invalid)
   const key = loadOrCreateMasterKey(home, env)
   writeBundle(home, { enc: encryptSecret(key, trimmed) })
   return { configured: true }
@@ -158,8 +185,19 @@ export function getVercelApiKey(opts = {}) {
 
 // Cheap boolean gate for the browser-facing endpoint. Returns only whether a
 // key is configured — never the key itself.
+//
+// IMPORTANT: this deliberately does NOT decrypt the payload (unlike
+// getVercelApiKey). It only checks that a persisted payload exists and parses
+// as an object with an `enc` field. Because the payload is a single JSON
+// object we wrote ourselves, a readable bundle with `enc` present implies a
+// configured key — no AES-256-GCM decrypt needed on the GET path. A missing
+// file, or a tampered/migrated payload that no longer has an `enc` field, is
+// treated as "not configured" (documented: a corrupt store is as good as none
+// until it is overwritten).
 export function vercelKeyConfigured(opts = {}) {
-  return !!getVercelApiKey(opts)
+  const home = opts.home || hermesHomeRoot(opts.env || process.env)
+  const bundle = readBundle(home)
+  return !!(bundle && bundle.enc)
 }
 
 function sendJson(res, status, obj) {
@@ -225,9 +263,20 @@ export async function serveVercelKey(req, res, opts = {}) {
     if (!vercelKeyWriteAuthorized(req, opts)) {
       return sendJson(res, 401, { error: 'unauthorized' })
     }
+    // Bounded read (SEC-F4): reject oversized bodies early so a malicious or
+    // buggy client can't exhaust memory. A Vercel API key is ~20–60 chars, so
+    // a 4 KB cap is far beyond any legitimate PUT while still tiny.
+    const MAX_PUT_BODY_BYTES = 4 * 1024
     let body = ''
+    let size = 0
     try {
-      for await (const chunk of req) body += chunk
+      for await (const chunk of req) {
+        size += chunk.length
+        if (size > MAX_PUT_BODY_BYTES) {
+          return sendJson(res, 413, { error: 'request body too large' })
+        }
+        body += chunk
+      }
     } catch (err) {
       return sendJson(res, 400, { error: 'could not read request body' })
     }
@@ -238,8 +287,11 @@ export async function serveVercelKey(req, res, opts = {}) {
       return sendJson(res, 400, { error: 'invalid JSON body' })
     }
     const apiKey = parsed?.apiKey
-    if (typeof apiKey !== 'string' || !apiKey.trim()) {
-      return sendJson(res, 400, { error: 'apiKey is required' })
+    // Basic format validation (VAL-F9): reject a typo'd / truncated key at
+    // save time rather than storing any non-empty string as configured.
+    const invalid = validateVercelApiKey(apiKey)
+    if (invalid) {
+      return sendJson(res, 400, { error: invalid })
     }
     try {
       setVercelApiKey(apiKey, opts)

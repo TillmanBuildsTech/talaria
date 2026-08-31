@@ -19,8 +19,17 @@ export function getVercelApiKey(opts?: {
   home?: string;
   env?: Record<string, string | undefined>;
 }): string | null;
+export function validateVercelApiKey(value: unknown): string | null;
 export function vercelKeyConfigured(opts?: {
   home?: string;
   env?: Record<string, string | undefined>;
 }): boolean;
-export function serveVercelKey(req: unknown, res: unknown): Promise<void>;
+export function vercelKeyWriteAuthorized(
+  req: { headers?: Record<string, string | undefined> },
+  opts?: { home?: string; env?: Record<string, string | undefined> }
+): boolean;
+export function serveVercelKey(
+  req: unknown,
+  res: unknown,
+  opts?: { home?: string; env?: Record<string, string | undefined> }
+): Promise<void>;
