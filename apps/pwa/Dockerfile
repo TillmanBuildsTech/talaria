@@ -17,6 +17,8 @@ WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=build /app/apps/pwa/dist ./dist
 COPY --from=build /app/apps/pwa/serve.mjs ./serve.mjs
+COPY --from=build /app/apps/pwa/talaria-config.mjs ./talaria-config.mjs
+COPY --from=build /app/apps/pwa/vercel-key.mjs ./vercel-key.mjs
 COPY --from=build /app/apps/pwa/package.json ./
 ENV PORT=8765
 EXPOSE 8765

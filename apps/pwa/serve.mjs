@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { serveTalariaConfig } from './talaria-config.mjs'
+import { serveVercelKey } from './vercel-key.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const DIST = join(__dirname, 'dist')
@@ -387,6 +388,14 @@ createServer(async (req, res) => {
       }
       if (req.method !== 'GET') return sendJson(res, 405, { error: 'method not allowed' })
       serveHostDirectory(res, url)
+      return
+    }
+
+    // 0.8) Vercel API-key store — server-side, encrypted at rest. Served
+    // locally (this server hosts the key) so the raw key never reaches the
+    // gateway or the browser. GET returns { configured }, PUT stores it.
+    if (url.pathname === '/api/deployments/vercel-key') {
+      await serveVercelKey(req, res)
       return
     }
 
