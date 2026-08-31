@@ -21,6 +21,7 @@ export { Deployments, DeploymentList, deploymentOutcome, deploymentStatusText } 
 export { PrPanel } from "./components/pr-panel";
 export { Observability } from "./components/observability";
 export { ProjectPicker } from "./components/project-picker";
+export { ProjectSettingsDialog } from "./components/project-settings-dialog";
 export { PullRequestDetail } from "./components/pull-request-detail";
 export { PullRequestList } from "./components/pull-request-list";
 export { RepoBrowser } from "./components/repo-browser";

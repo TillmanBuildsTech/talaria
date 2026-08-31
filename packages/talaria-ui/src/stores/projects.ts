@@ -14,7 +14,8 @@ import db, { type Project } from "../db";
 const SETTING_ACTIVE_PROJECT = "activeProjectId";
 
 // Stable colors for auto-assigned project accents (cycled round-robin).
-const PROJECT_COLORS = ["#38bdf8", "#a78bfa", "#34d399", "#fbbf24", "#fb7185", "#60a5fa"];
+// Exported so the settings dialog offers the same palette for manual picks.
+export const PROJECT_COLORS = ["#38bdf8", "#a78bfa", "#34d399", "#fbbf24", "#fb7185", "#60a5fa"];
 
 function slugify(name: string): string {
   return (
