@@ -21,6 +21,8 @@ export type NavEntry = {
   icon: ReactNode;
   disabled?: boolean;
   note?: string;
+  /** Pin the entry to the bottom of the rail (e.g. Settings). */
+  footer?: boolean;
 };
 
 const baseIcon = "w-5 h-5 shrink-0";
@@ -88,7 +90,7 @@ function SettingsIcon() {
         strokeLinecap="round"
         strokeLinejoin="round"
         strokeWidth={2}
-        d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c-1.543.426 1.756 2.924 0 3.35a1.724 1.724 0 00-2.573-1.066c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543-.826-3.31-2.37-2.37a1.724 1.724 0 00-2.573 1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-2.573 1.066c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37a1.724 1.724 0 00-2.573 1.066c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+        d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
       />
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
     </svg>
@@ -104,7 +106,7 @@ const DEFAULT_ENTRIES: Array<NavEntry> = [
   { id: "deployments", label: "Deployments", icon: <DeployIcon /> },
   { id: "docs", label: "Docs", icon: <DocIcon />, disabled: true, note: "coming soon" },
   { id: "editor", label: "Editor", icon: <EditorIcon />, disabled: true, note: "desktop only" },
-  { id: "settings", label: "Settings", icon: <SettingsIcon /> },
+  { id: "settings", label: "Settings", icon: <SettingsIcon />, footer: true },
 ];
 
 export function NavRail({
@@ -116,36 +118,47 @@ export function NavRail({
   onSelect: (id: NavModuleId) => void;
   entries?: Array<NavEntry>;
 }) {
+  const mainEntries = entries.filter((entry) => !entry.footer);
+  const footerEntries = entries.filter((entry) => entry.footer);
+
+  function renderEntry(entry: NavEntry) {
+    const isActive = active === entry.id;
+    const disabled = entry.disabled;
+    return (
+      <button
+        key={entry.id}
+        type="button"
+        disabled={disabled}
+        onClick={() => onSelect(entry.id)}
+        title={entry.note ? `${entry.label} — ${entry.note}` : entry.label}
+        aria-label={entry.label}
+        aria-current={isActive ? "page" : undefined}
+        className={`w-12 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 transition-colors ${
+          disabled
+            ? "text-slate-600 cursor-not-allowed"
+            : isActive
+              ? "bg-slate-700 text-slate-100"
+              : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+        }`}
+      >
+        {entry.icon}
+        <span className="text-[9px] leading-none tracking-wide">{entry.label}</span>
+      </button>
+    );
+  }
+
   return (
     <nav
       aria-label="Modules"
       className="w-16 shrink-0 border-r border-slate-800 bg-slate-900/60 flex flex-col items-center py-2 gap-1"
     >
-      {entries.map((entry) => {
-        const isActive = active === entry.id;
-        const disabled = entry.disabled;
-        return (
-          <button
-            key={entry.id}
-            type="button"
-            disabled={disabled}
-            onClick={() => onSelect(entry.id)}
-            title={entry.note ? `${entry.label} — ${entry.note}` : entry.label}
-            aria-label={entry.label}
-            aria-current={isActive ? "page" : undefined}
-            className={`w-12 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 transition-colors ${
-              disabled
-                ? "text-slate-600 cursor-not-allowed"
-                : isActive
-                ? "bg-slate-700 text-slate-100"
-                : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"
-            }`}
-          >
-            {entry.icon}
-            <span className="text-[9px] leading-none tracking-wide">{entry.label}</span>
-          </button>
-        );
-      })}
+      {mainEntries.map(renderEntry)}
+      {footerEntries.length > 0 && (
+        <>
+          <div className="flex-1" />
+          {footerEntries.map(renderEntry)}
+        </>
+      )}
     </nav>
   );
 }
