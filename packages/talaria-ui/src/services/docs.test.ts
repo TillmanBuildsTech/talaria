@@ -275,5 +275,81 @@ describe("GatewayDocsTransport.listDirectory", () => {
     const fetchImpl = async () => ({ ok: false, status: 404 } as Response);
     const t = new GatewayDocsTransport("http://hermes:8642", null, fetchImpl as never);
     await expect(t.listDirectory("~/.hermes/projects")).rejects.toThrow("Docs gateway HTTP 404");
+describe("git detection", () => {
+  // A fake host filesystem modeling directory structure (isDir + subdir
+  // contents) so we can probe listDirectory's per-subdir .git peek.
+  function dirFs(): DocsFileSystem & { dirs: Map<string, Array<{ name: string; isDir: boolean }>> } {
+    const dirs = new Map<string, Array<{ name: string; isDir: boolean }>>();
+    const fs: DocsFileSystem = {
+      async readFile(path) {
+        throw new Error(`readFile not expected: ${path}`);
+      },
+      async writeFile() {
+        throw new Error("writeFile not expected");
+      },
+      async removeFile() {
+        throw new Error("removeFile not expected");
+      },
+      async listDir(path) {
+        const entries = dirs.get(path);
+        if (!entries) throw new Error(`ENOENT: ${path}`);
+        return entries;
+      },
+    };
+    return { ...fs, dirs };
+  }
+
+  it("isGitRoot is false without a .git entry and true with one", () => {
+    expect(isGitRoot([{ name: "src", isDir: true }])).toBe(false);
+    expect(isGitRoot([{ name: "src", isDir: true }, { name: ".git", isDir: true }])).toBe(true);
+    // A .git file (worktree/submodule) also counts.
+    expect(isGitRoot([{ name: ".git", isDir: false }])).toBe(true);
+  });
+
+  it("listDirectory flags a non-git folder's subdirs as isGitRepo:false", async () => {
+    const fs = dirFs();
+    const t = new FilesystemDocsTransport(fs);
+    fs.dirs.set("~/.hermes/projects", [
+      { name: "plain", isDir: true },
+      { name: "notes.txt", isDir: false },
+    ]);
+    fs.dirs.set("~/.hermes/projects/plain", [{ name: "src", isDir: true }]);
+
+    const listing = await t.listDirectory("~/.hermes/projects");
+    const plain = listing.entries.find((e) => e.name === "plain");
+    expect(plain?.isDir).toBe(true);
+    expect(plain?.isGitRepo).toBe(false);
+    // Non-directory entries carry no git flag.
+    expect(listing.entries.find((e) => e.name === "notes.txt")?.isGitRepo).toBeUndefined();
+  });
+
+  it("listDirectory flags a git folder's subdirs as isGitRepo:true", async () => {
+    const fs = dirFs();
+    const t = new FilesystemDocsTransport(fs);
+    fs.dirs.set("~/.hermes/projects", [
+      { name: "repo-a", isDir: true },
+      { name: "worktree-b", isDir: true },
+    ]);
+    fs.dirs.set("~/.hermes/projects/repo-a", [
+      { name: ".git", isDir: true },
+      { name: "src", isDir: true },
+    ]);
+    fs.dirs.set("~/.hermes/projects/worktree-b", [
+      { name: ".git", isDir: false },
+    ]);
+
+    const listing = await t.listDirectory("~/.hermes/projects");
+    expect(listing.entries.find((e) => e.name === "repo-a")?.isGitRepo).toBe(true);
+    expect(listing.entries.find((e) => e.name === "worktree-b")?.isGitRepo).toBe(true);
+  });
+
+  it("listDirectory tolerates a subdir whose contents can't be read (treats as non-git)", async () => {
+    const fs = dirFs();
+    const t = new FilesystemDocsTransport(fs);
+    fs.dirs.set("~/.hermes/projects", [{ name: "locked", isDir: true }]);
+    // 'locked' has no listing — the peek throws, and it must degrade to false.
+
+    const listing = await t.listDirectory("~/.hermes/projects");
+    expect(listing.entries.find((e) => e.name === "locked")?.isGitRepo).toBe(false);
   });
 });
