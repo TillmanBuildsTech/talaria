@@ -62,10 +62,17 @@ export type KanbanState = {
 
 // Map a raw board status column into a Command Center column key, then filter
 // that column's cards (scheduled/ready collapse into Ready; archived hidden).
+// Archived cards are filtered here in the store (defense in depth — the bridge
+// SQL also excludes them) so the Done column never shows archived work.
 function columnCards(board: KanbanBoard, status: KanbanStatus): Array<KanbanCard> {
   const out: Array<KanbanCard> = [];
   for (const [raw, cards] of Object.entries(board.columns)) {
-    if (columnForStatus(raw as KanbanStatus) === status) out.push(...cards);
+    if (raw === "archived") continue;
+    if (columnForStatus(raw as KanbanStatus) !== status) continue;
+    for (const c of cards) {
+      if (c.status === "archived") continue;
+      out.push(c);
+    }
   }
   return out;
 }
