@@ -1,8 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { usePrsStore } from "../stores/prs";
+import { useProjectsStore } from "../stores/projects";
+import { useReposStore } from "../stores/repos";
 import { RepoPicker } from "./repo-picker";
 import { PullRequestList } from "./pull-request-list";
 import { PullRequestDetail } from "./pull-request-detail";
+import { GitRepoNotice } from "./git-repo-notice";
 
 // The PRs module (M2, spec §9). Left = repo browser, right-top = that repo's
 // open PRs, right-main = the selected PR's detail (diff, review, gated merge).
@@ -13,6 +16,27 @@ export function PrPanel({ onClose }: { onClose?: () => void }) {
   const loadPrDetail = usePrsStore((s) => s.loadPrDetail);
   const clearDetail = usePrsStore((s) => s.clearDetail);
 
+  // Whole-app project scoping (P9): when a project is active, scope the PRs
+  // module to that project's ATTACHED repo rather than the globally-persisted
+  // selection. Global scope keeps the user's last-picked repo.
+  const activeProjectId = useProjectsStore((s) => s.activeProjectId);
+  const repos = useReposStore((s) => s.repos);
+  const loadRepos = useReposStore((s) => s.loadRepos);
+  const scopeRepo = useMemo(
+    () => (activeProjectId ? repos.find((r) => r.project === activeProjectId) : undefined),
+    [repos, activeProjectId]
+  );
+  useEffect(() => {
+    if (activeProjectId) void loadRepos(activeProjectId);
+    // biome-ignore lint/correctness/useExhaustiveDependencies: load once per scope change
+  }, [activeProjectId, loadRepos]);
+
+  // Effective active repo: the project's attached repo when a project is
+  // active; otherwise the globally-persisted selection.
+  const scopeFullName = scopeRepo?.fullName ?? null;
+  const effActiveFullName = activeProjectId ? scopeFullName : activeFullName;
+  const [owner, repo] = effActiveFullName?.split("/") ?? [];
+
   const [started, setStarted] = useState(false);
   useEffect(() => {
     if (!started) {
@@ -21,20 +45,20 @@ export function PrPanel({ onClose }: { onClose?: () => void }) {
     }
   }, [started]);
 
-  const [owner, repo] = activeFullName?.split("/") ?? [];
-
-  // Clear any open PR detail when switching repos.
+  // Clear any open PR detail when switching repos or project scope.
   useEffect(() => {
     clearDetail();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeFullName]);
+  }, [effActiveFullName]);
 
   function backToList() {
     clearDetail();
   }
 
   return (
-    <div className="flex h-full min-h-0 border-b border-slate-800">
+    <>
+      <GitRepoNotice />
+      <div className="flex h-full min-h-0 border-b border-slate-800">
       {/* Repo browser */}
       <aside className="w-56 shrink-0 border-r border-slate-800 flex flex-col min-h-0">
         <div className="px-3 py-2 border-b border-slate-800 flex items-center justify-between">
@@ -48,13 +72,19 @@ export function PrPanel({ onClose }: { onClose?: () => void }) {
           )}
         </div>
         <div className="flex-1 min-h-0">
-          <RepoPicker />
+          <RepoPicker project={activeProjectId} scopeFullName={scopeFullName} />
         </div>
       </aside>
 
       {/* PR list OR detail */}
       <main className="flex-1 min-w-0 min-h-0">
-        {owner && repo && detail ? (
+        {activeProjectId && !scopeRepo ? (
+          <div className="h-full flex flex-col items-center justify-center text-slate-500 gap-2 px-6 text-center">
+            <p className="text-xs text-amber-400 bg-amber-400/10 border border-amber-400/20 rounded-lg px-3 py-2">
+              No repository is attached to this project. Attach one in the Repos module to view its pull requests.
+            </p>
+          </div>
+        ) : owner && repo && detail ? (
           <PullRequestDetail owner={owner} repo={repo} number={detail.pr.number} onBack={backToList} />
         ) : owner && repo ? (
           <PullRequestList
@@ -78,6 +108,7 @@ export function PrPanel({ onClose }: { onClose?: () => void }) {
           </div>
         )}
       </main>
-    </div>
+      </div>
+    </>
   );
 }

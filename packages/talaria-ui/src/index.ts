@@ -18,12 +18,15 @@ export {
   CiWorkflowRuns,
 } from "./components/ci-status";
 export { Deployments, DeploymentList, deploymentOutcome, deploymentStatusText } from "./components/deployments";
-export { PrPanel } from "./components/pr-panel";
+export { PrRow, PullRequestList } from "./components/pull-request-list";
+export { WipView } from "./components/wip-view";
 export { Observability } from "./components/observability";
 export { ProjectPicker } from "./components/project-picker";
+export { ProjectSettingsDialog } from "./components/project-settings-dialog";
+export { FolderPicker } from "./components/folder-picker";
+export type { PickedFolder } from "./components/folder-picker";
+export { GitRepoNotice } from "./components/git-repo-notice";
 export { PullRequestDetail } from "./components/pull-request-detail";
-export { PullRequestList } from "./components/pull-request-list";
-export { RepoBrowser } from "./components/repo-browser";
 export { RepoPicker } from "./components/repo-picker";
 export { SettingsPage } from "./components/settings-page";
 export { Sidebar } from "./components/sidebar";
@@ -105,7 +108,7 @@ export { useChatStore } from "./stores/chat";
 export type { DeviceFlowState, GitHubState } from "./stores/github";
 export { useGitHubStore, setDesktopFetchImpl } from "./stores/github";
 export type { ProjectInput, ProjectsState } from "./stores/projects";
-export { useProjectsStore } from "./stores/projects";
+export { projectFolder, useProjectsStore } from "./stores/projects";
 export type { PrDetail, PrsState } from "./stores/prs";
 export { usePrsStore } from "./stores/prs";
 export type { ReposState } from "./stores/repos";
@@ -120,7 +123,10 @@ export {
   docsClient,
   docsDir,
   docsFilePath,
+  HOST_DIR_BASE,
+  isGitRoot,
   normalizeDocName,
+  normalizeHostDir,
   PROJECTS_ROOT,
 } from "./services/docs";
 export type {
@@ -128,6 +134,8 @@ export type {
   DocsFileSystem,
   DocsTransport,
   DocsTransportKind,
+  HostDirEntry,
+  HostDirListing,
   ProjectDoc,
   ProjectDocMeta,
 } from "./services/docs";

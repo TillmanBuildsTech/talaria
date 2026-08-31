@@ -7,6 +7,7 @@ import { useShallow } from "zustand/react/shallow";
 import { useGitHubStore } from "../stores/github";
 import { useProjectsStore } from "../stores/projects";
 import { useReposStore } from "../stores/repos";
+import { GitRepoNotice } from "./git-repo-notice";
 
 function shortSha(sha: string): string {
   return sha.slice(0, 7);
@@ -101,6 +102,7 @@ export function RepoBrowser() {
 
   return (
     <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+      <GitRepoNotice />
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold text-slate-300">Repos</h2>
         <span className="text-[10px] uppercase tracking-wider text-slate-500">scope · {projectLabel}</span>

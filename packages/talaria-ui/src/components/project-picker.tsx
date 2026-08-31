@@ -4,7 +4,10 @@
 // scope; selecting one swaps the whole view/data namespace.
 import { useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { useProjectsStore } from "../stores/projects";
+import type { Project } from "../db";
+import { projectFolder, useProjectsStore } from "../stores/projects";
+import { ProjectSettingsDialog } from "./project-settings-dialog";
+import { FolderPicker, type PickedFolder } from "./folder-picker";
 
 const GLOBAL_COLOR = "#64748b";
 
@@ -18,6 +21,8 @@ export function ProjectPicker() {
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
+  const [pickedFolder, setPickedFolder] = useState<PickedFolder | null>(null);
+  const [settingsProject, setSettingsProject] = useState<Project | null>(null);
 
   const label = activeProject ? activeProject.name : "Global / Unassigned";
   const color = activeProject?.color || GLOBAL_COLOR;
@@ -30,15 +35,20 @@ export function ProjectPicker() {
   async function submitCreate() {
     const name = nameDraft.trim();
     if (!name) return;
-    const created = await createProject({ name });
+    const created = await createProject({
+      name,
+      folder: pickedFolder?.path,
+      isGitRepo: pickedFolder?.isGitRepo,
+    });
     setNameDraft("");
+    setPickedFolder(null);
     setCreating(false);
     await setActiveProject(created.id);
     setOpen(false);
   }
 
   return (
-    <div className="relative shrink-0">
+    <div className="relative shrink-0 flex items-center gap-1.5">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -52,6 +62,31 @@ export function ProjectPicker() {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
       </button>
+
+      {/* Project settings gear — only when a real project is selected (the
+          global scope is not editable, projects-spec.md §6.5). */}
+      {activeProject && (
+        <button
+          type="button"
+          onClick={() => {
+            setOpen(false);
+            setSettingsProject(activeProject);
+          }}
+          className="p-1.5 rounded-lg border border-slate-700 hover:bg-slate-800 transition-colors"
+          title="Project settings"
+          aria-label="Project settings"
+        >
+          <svg className="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+            />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+        </button>
+      )}
 
       {open && (
         <>
@@ -98,7 +133,7 @@ export function ProjectPicker() {
             )}
 
             {creating ? (
-              <div className="px-3 py-2 border-t border-slate-700/60 flex items-center gap-2">
+              <div className="px-3 py-2 border-t border-slate-700/60 space-y-2">
                 <input
                   autoFocus
                   value={nameDraft}
@@ -112,18 +147,42 @@ export function ProjectPicker() {
                     }
                   }}
                   placeholder="Project name"
-                  className="flex-1 bg-slate-900 text-xs rounded px-2 py-1.5 outline-none ring-1 ring-blue-500 text-slate-100"
+                  className="w-full bg-slate-900 text-xs rounded px-2 py-1.5 outline-none ring-1 ring-blue-500 text-slate-100"
                 />
-                <button
-                  type="button"
-                  onClick={submitCreate}
-                  disabled={!nameDraft.trim()}
-                  className={`px-2 py-1.5 rounded text-xs font-medium transition-colors ${
-                    nameDraft.trim() ? "bg-blue-600 hover:bg-blue-700 text-white" : "bg-slate-700 text-slate-400 cursor-not-allowed"
-                  }`}
-                >
-                  Create
-                </button>
+                {/* Host folder picker (project ↔ folder tie). Defaults to the
+                    slug-derived folder; user can browse + select a git repo. */}
+                <FolderPicker
+                  initialPath={pickedFolder?.path || projectFolder((nameDraft.trim() || "project").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""))}
+                  onPick={(f) => setPickedFolder(f)}
+                />
+                {pickedFolder && (
+                  <p className="text-[10px] text-slate-500 font-mono truncate">
+                    {pickedFolder.path}
+                    {pickedFolder.isGitRepo ? " · git" : " · not a git repo"}
+                  </p>
+                )}
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCreating(false);
+                      setPickedFolder(null);
+                    }}
+                    className="px-2 py-1.5 rounded text-xs text-slate-400 hover:bg-slate-800 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={submitCreate}
+                    disabled={!nameDraft.trim()}
+                    className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+                      nameDraft.trim() ? "bg-blue-600 hover:bg-blue-700 text-white" : "bg-slate-700 text-slate-400 cursor-not-allowed"
+                    }`}
+                  >
+                    Create
+                  </button>
+                </div>
               </div>
             ) : (
               <button
@@ -137,6 +196,9 @@ export function ProjectPicker() {
           </div>
         </>
       )}
+
+      {/* Project settings dialog */}
+      {settingsProject && <ProjectSettingsDialog project={settingsProject} onClose={() => setSettingsProject(null)} />}
     </div>
   );
 }

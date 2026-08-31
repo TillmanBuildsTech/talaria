@@ -1,10 +1,26 @@
 import { usePrsStore } from "../stores/prs";
 
+type RepoPickerProps = {
+  // Active project scope (P9). When set, the picker only lists repos attached
+  // to that project and highlights the project's attached repo as the active
+  // selection (derived by PrPanel). When null (global/unassigned scope), the
+  // full connected repo list is shown with the user's last-picked selection.
+  project?: string | null;
+  scopeFullName?: string | null;
+};
+
 // Left-hand repo picker for the PRs module (§9.2). Shows the connected account's
 // repos (owner + collaborator), keeps the last selection via the store, and
-// loads that repo's open PRs on select. Distinct from the repo-browser module.
-export function RepoPicker() {
+// loads that repo's open PRs on select. When a project is active the list is
+// scoped to that project's attached repo (P9), mirroring the Deployments
+// module. Distinct from the repo-browser module.
+export function RepoPicker({ project, scopeFullName }: RepoPickerProps) {
   const { repos, activeFullName, loadingRepos, selectRepo, refreshRepos } = usePrsStore();
+
+  // Project-scoped view: only the active project's attached repo is listed;
+  // the effective active selection is the attached repo (PrPanel derives it).
+  const effActiveFullName = project ? scopeFullName ?? null : activeFullName;
+  const visibleRepos = project && scopeFullName ? repos.filter((r) => r.fullName === scopeFullName) : repos;
 
   return (
     <div className="flex flex-col h-full">
@@ -22,15 +38,19 @@ export function RepoPicker() {
 
       {loadingRepos && repos.length === 0 ? (
         <div className="flex-1 flex items-center justify-center text-sm text-slate-500 py-8">Loading repositories…</div>
-      ) : repos.length === 0 ? (
+      ) : visibleRepos.length === 0 ? (
         <div className="px-3 py-6 text-center">
-          <p className="text-sm text-slate-400">No repos connected.</p>
-          <p className="text-[11px] text-slate-600 mt-1">Connect a GitHub account in Settings to list your repositories and pull requests.</p>
+          <p className="text-sm text-slate-400">{project ? "No repo attached to this project." : "No repos connected."}</p>
+          <p className="text-[11px] text-slate-600 mt-1">
+            {project
+              ? "Attach a repo in the Repos module to view its pull requests."
+              : "Connect a GitHub account in Settings to list your repositories and pull requests."}
+          </p>
         </div>
       ) : (
         <ul className="px-2 py-2 space-y-0.5 overflow-y-auto">
-          {repos.map((repo) => {
-            const active = activeFullName === repo.fullName;
+          {visibleRepos.map((repo) => {
+            const active = effActiveFullName === repo.fullName;
             return (
               <li key={repo.fullName}>
                 <button

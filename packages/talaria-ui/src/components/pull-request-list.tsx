@@ -10,7 +10,7 @@ type PullRequestListProps = {
 // A compact PR row per spec §6.5: title, author, `head → base`, a draft badge,
 // and (only for open PRs in a protected repo) the mergeable_state hint. Tapping
 // the row opens the detail drawer. Every row links back to GitHub (P3).
-function PrRow({ pr, onClick }: { pr: CachedPullRequest; onClick: () => void }) {
+export function PrRow({ pr, onClick }: { pr: CachedPullRequest; onClick: () => void }) {
   return (
     <li>
       <button
