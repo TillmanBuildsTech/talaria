@@ -3,6 +3,7 @@ import { usePrsStore } from "../stores/prs";
 import { RepoPicker } from "./repo-picker";
 import { PullRequestList } from "./pull-request-list";
 import { PullRequestDetail } from "./pull-request-detail";
+import { GitRepoNotice } from "./git-repo-notice";
 
 // The PRs module (M2, spec §9). Left = repo browser, right-top = that repo's
 // open PRs, right-main = the selected PR's detail (diff, review, gated merge).
@@ -34,7 +35,9 @@ export function PrPanel({ onClose }: { onClose?: () => void }) {
   }
 
   return (
-    <div className="flex h-full min-h-0 border-b border-slate-800">
+    <>
+      <GitRepoNotice />
+      <div className="flex h-full min-h-0 border-b border-slate-800">
       {/* Repo browser */}
       <aside className="w-56 shrink-0 border-r border-slate-800 flex flex-col min-h-0">
         <div className="px-3 py-2 border-b border-slate-800 flex items-center justify-between">
@@ -78,6 +81,7 @@ export function PrPanel({ onClose }: { onClose?: () => void }) {
           </div>
         )}
       </main>
-    </div>
+      </div>
+    </>
   );
 }

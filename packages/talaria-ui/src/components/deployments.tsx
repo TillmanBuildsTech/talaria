@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useGitHubStore } from "../stores/github";
+import { useReposStore } from "../stores/repos";
+import { GitRepoNotice } from "./git-repo-notice";
 import type { Deployment } from "../db";
 import type { WorkflowMeta } from "../services/github";
 
@@ -233,6 +235,23 @@ export function Deployments({ owner, repo, project }: DeploymentsProps) {
   const dispatchDeployment = useGitHubStore((s) => s.dispatchDeployment);
   const refreshDeployment = useGitHubStore((s) => s.refreshDeployment);
 
+  // Whole-app project scoping (P9): when a project is active, scope the trigger
+  // to that project's ATTACHED repo rather than a hardcoded default. Global
+  // scope keeps the passed owner/repo (today's default).
+  const repos = useReposStore((s) => s.repos);
+  const loadRepos = useReposStore((s) => s.loadRepos);
+  const scopeRepo = useMemo(
+    () => (project ? repos.find((r) => r.project === project) : undefined),
+    [repos, project]
+  );
+  useEffect(() => {
+    if (project) void loadRepos(project);
+    // biome-ignore lint/correctness/useExhaustiveDependencies: load once per scope change
+  }, [project, loadRepos]);
+
+  const effOwner = scopeRepo?.owner ?? owner;
+  const effRepo = scopeRepo?.name ?? repo;
+
   const [workflows, setWorkflows] = useState<Array<WorkflowMeta>>([]);
   const [showForm, setShowForm] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -257,7 +276,7 @@ export function Deployments({ owner, repo, project }: DeploymentsProps) {
       }
       if (cancelled) return;
       try {
-        const ws = await listDispatchableWorkflows(owner, repo);
+        const ws = await listDispatchableWorkflows(effOwner, effRepo);
         if (!cancelled) {
           setWorkflows(ws);
           setWorkflowsError(null);
@@ -269,7 +288,7 @@ export function Deployments({ owner, repo, project }: DeploymentsProps) {
     return () => {
       cancelled = true;
     };
-  }, [owner, repo, project, listDispatchableWorkflows]);
+  }, [effOwner, effRepo, project, listDispatchableWorkflows]);
 
   // Auto-poll running deployments while any are in_progress (light cadence).
   const running = useMemo(() => deployments.filter((d) => d.status !== "completed"), [deployments]);
@@ -290,7 +309,7 @@ export function Deployments({ owner, repo, project }: DeploymentsProps) {
   async function handleDispatch(workflowId: number, workflowName: string, ref: string, inputs: Record<string, string>) {
     setBusy(true);
     try {
-      await dispatchDeployment({ owner, repo, workflowId, workflowName, ref, inputs, project });
+      await dispatchDeployment({ owner: effOwner, repo: effRepo, workflowId, workflowName, ref, inputs, project });
       setShowForm(false);
     } finally {
       setBusy(false);
@@ -305,10 +324,15 @@ export function Deployments({ owner, repo, project }: DeploymentsProps) {
 
   return (
     <div className="space-y-3">
-      {showForm ? (
+      <GitRepoNotice />
+      {project && !scopeRepo ? (
+        <p className="text-xs text-amber-400 bg-amber-400/10 border border-amber-400/20 rounded-lg px-3 py-2">
+          No repository is attached to this project. Attach one in the Repos module to trigger deployments for it.
+        </p>
+      ) : showForm ? (
         <TriggerForm
-          owner={owner}
-          repo={repo}
+          owner={effOwner}
+          repo={effRepo}
           workflows={workflows}
           busy={busy}
           onSubmit={handleDispatch}
