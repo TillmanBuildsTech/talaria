@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { defineConfig, loadEnv } from "vite";
 import { VitePWA } from "vite-plugin-pwa";
+import { serveTalariaConfig } from "./talaria-config.mjs";
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
@@ -38,11 +39,31 @@ export default defineConfig(({ mode }) => {
     },
   });
 
+  // Serve the real per-profile API keys on the Vite dev server — the live
+  // path the app actually uses (talaria-dev.service → Caddy). Without this,
+  // GET /talaria-config falls through to Vite's SPA fallback (index.html),
+  // applyServerConfig() throws on r.json() and swallows it, and no agent is
+  // ever provisioned with its own key — so /p/<profile>/ chats 401 and show
+  // "Tap to retry". Same payload as serve.mjs, from the shared module.
+  const serveTalariaConfigDev = () => ({
+    name: "serve-talaria-config",
+    configureServer(server: { middlewares: { use: (fn: (req: IncomingMessage, res: ServerResponse, next: () => void) => void) => void } }) {
+      server.middlewares.use((req, res, next) => {
+        if (req.method === "GET" && req.url?.split("?")[0] === "/talaria-config") {
+          serveTalariaConfig(res);
+          return;
+        }
+        next();
+      });
+    },
+  });
+
   return {
     define: {
       __HERMES_API_KEY__: JSON.stringify(env.HERMES_API_KEY || process.env.HERMES_API_KEY || ""),
     },
     plugins: [
+      serveTalariaConfigDev(),
       devBasicAuth(),
       react(),
       tailwindcss(),
