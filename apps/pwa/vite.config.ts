@@ -11,6 +11,7 @@ import {
   readJsonBody,
   projectsDocsHome,
 } from "./projects-docs.mjs";
+import { serveVercelKey } from "./vercel-key.mjs";
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
@@ -91,6 +92,24 @@ export default defineConfig(({ mode }) => {
     },
   });
 
+  // Serve the Vercel API-key store on the Vite dev server — the live path the
+  // app actually uses (talaria-dev.service → Caddy). Without this,
+  // GET/PUT /api/deployments/vercel-key falls through to the /api gateway
+  // proxy (which 404s it) and the deployments tab can't save/read the default
+  // key. Same handlers as serve.mjs, from the shared module.
+  const serveVercelKeyDev = () => ({
+    name: "serve-vercel-key",
+    configureServer(server: { middlewares: { use: (fn: (req: IncomingMessage, res: ServerResponse, next: () => void) => void) => void } }) {
+      server.middlewares.use((req, res, next) => {
+        if (req.url?.split("?")[0] === "/api/deployments/vercel-key") {
+          void serveVercelKey(req, res);
+          return;
+        }
+        next();
+      });
+    },
+  });
+
   return {
     define: {
       __HERMES_API_KEY__: JSON.stringify(env.HERMES_API_KEY || process.env.HERMES_API_KEY || ""),
@@ -98,6 +117,7 @@ export default defineConfig(({ mode }) => {
     plugins: [
       serveTalariaConfigDev(),
       serveProjectsDocsDev(),
+      serveVercelKeyDev(),
       devBasicAuth(),
       react(),
       tailwindcss(),
