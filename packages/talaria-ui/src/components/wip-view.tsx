@@ -63,6 +63,7 @@ export function WipView() {
   const [prBusy, setPrBusy] = useState<Record<string, boolean>>({});
   const [filter, setFilter] = useState("");
   const [openPrsOnly, setOpenPrsOnly] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [openPr, setOpenPr] = useState<{ owner: string; repo: string; number: number } | null>(null);
 
   // Track which repos have had their open PRs requested so the background
@@ -93,6 +94,28 @@ export function WipView() {
       void refreshPrsFor(r.owner, r.name);
     }
   }, [repos, connected, refreshPrsFor]);
+
+  // Refresh control (AC4): reload the repo list and re-fetch open-PR counts
+  // for every repo so counts reflect current GitHub state even if PRs opened
+  // or closed while the view stayed mounted.
+  async function handleRefresh() {
+    if (!connected) return;
+    setRefreshing(true);
+    try {
+      // Allow the background-fetch effect below to re-request every repo's
+      // open PRs (its prsRequested guard normally runs once per repo).
+      prsRequested.current = new Set();
+      await loadRepos(activeProjectId);
+      // Re-fetch counts for every repo, not just ones the effect saw change.
+      for (const r of useReposStore.getState().repos) {
+        if (prsRequested.current.has(r.fullName)) continue;
+        prsRequested.current.add(r.fullName);
+        void refreshPrsFor(r.owner, r.name);
+      }
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   async function toggleRepo(repoId: string) {
     const repo = repos.find((r) => r.id === repoId);
@@ -191,6 +214,27 @@ export function WipView() {
           <span className="text-[10px] uppercase tracking-wider text-slate-500">scope · {projectLabel}</span>
         </div>
         <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={refreshing}
+            aria-label="Refresh"
+            title="Refresh repos and open PR counts"
+            className="shrink-0 p-1.5 rounded-lg text-slate-500 hover:text-slate-200 hover:bg-slate-800 transition-colors disabled:opacity-50 disabled:pointer-events-none"
+          >
+            {refreshing ? (
+              <span className="block w-4 h-4 border-2 border-slate-600 border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                />
+              </svg>
+            )}
+          </button>
           <input
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
