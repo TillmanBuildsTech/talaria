@@ -10,6 +10,7 @@
 // The active selection is persisted in settings so it survives reloads.
 import { create } from "zustand";
 import db, { type Project } from "../db";
+import { PROJECTS_ROOT } from "../services/docs";
 
 const SETTING_ACTIVE_PROJECT = "activeProjectId";
 
@@ -35,11 +36,18 @@ function newId(): string {
   return `proj-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+// The server folder a project maps to, by slug (P9 / projects.md). Project
+// docs live under <folder>/docs/. Mirrors services/docs docsDir for the root.
+export function projectFolder(slug: string): string {
+  return `${PROJECTS_ROOT}/${slug}`;
+}
+
 export type ProjectInput = {
   name: string;
   slug?: string;
   description?: string;
   color?: string;
+  folder?: string;
 };
 
 export type ProjectsState = {
@@ -50,7 +58,7 @@ export type ProjectsState = {
   init: () => Promise<void>;
   loadProjects: () => Promise<void>;
   createProject: (input: ProjectInput) => Promise<Project>;
-  updateProject: (id: string, patch: Partial<Pick<Project, "name" | "slug" | "description" | "color">>) => Promise<void>;
+  updateProject: (id: string, patch: Partial<Pick<Project, "name" | "slug" | "description" | "color" | "folder">>) => Promise<void>;
   deleteProject: (id: string) => Promise<void>;
   setActiveProject: (id: string | null) => Promise<void>;
   // ── scope helpers (used by scoped stores at their boundary) ────────────
@@ -89,15 +97,17 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
     }
   },
 
-  async createProject({ name, slug, description, color }) {
+  async createProject({ name, slug, description, color, folder }) {
     const trimmed = (name || "").trim();
     if (!trimmed) throw new Error("Project name is required");
+    const projectSlug = slugify(slug || trimmed);
     const project: Project = {
       id: newId(),
-      slug: slugify(slug || trimmed),
+      slug: projectSlug,
       name: trimmed,
       description,
       color: color || PROJECT_COLORS[get().projects.length % PROJECT_COLORS.length],
+      folder: folder || projectFolder(projectSlug),
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -114,6 +124,7 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
       ...(patch.slug != null && patch.name == null ? { slug: slugify(patch.slug) } : {}),
       ...(patch.description !== undefined ? { description: patch.description } : {}),
       ...(patch.color !== undefined ? { color: patch.color } : {}),
+      ...(patch.folder !== undefined ? { folder: patch.folder } : {}),
       updatedAt: Date.now(),
     };
     await db.projects.update(id, next);

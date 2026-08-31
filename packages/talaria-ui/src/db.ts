@@ -99,6 +99,10 @@ export type Project = {
   name: string;
   description?: string;
   color?: string;
+  // The server-side workspace folder this project maps to (P9/projects.md):
+  // e.g. ~/.hermes/projects/<slug>/. Project docs live under <folder>/docs/.
+  // Defaults to the slug-derived path when not set.
+  folder?: string;
   createdAt: number;
   updatedAt: number;
 };
