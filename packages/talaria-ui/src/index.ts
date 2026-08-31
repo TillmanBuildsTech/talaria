@@ -18,12 +18,11 @@ export {
   CiWorkflowRuns,
 } from "./components/ci-status";
 export { Deployments, DeploymentList, deploymentOutcome, deploymentStatusText } from "./components/deployments";
-export { PrPanel } from "./components/pr-panel";
+export { PrRow, PullRequestList } from "./components/pull-request-list";
+export { WipView } from "./components/wip-view";
 export { Observability } from "./components/observability";
 export { ProjectPicker } from "./components/project-picker";
 export { PullRequestDetail } from "./components/pull-request-detail";
-export { PullRequestList } from "./components/pull-request-list";
-export { RepoBrowser } from "./components/repo-browser";
 export { RepoPicker } from "./components/repo-picker";
 export { SettingsPage } from "./components/settings-page";
 export { Sidebar } from "./components/sidebar";

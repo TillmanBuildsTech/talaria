@@ -8,8 +8,7 @@ export type NavModuleId =
   | "chat"
   | "command-center"
   | "observability"
-  | "repos"
-  | "prs"
+  | "wip"
   | "deployments"
   | "docs"
   | "editor"
@@ -37,14 +36,6 @@ function BoardIcon() {
   return (
     <svg className={baseIcon} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h7v7H3V3zm11 0h7v7h-7V3zM3 14h7v7H3v-7zm11 0h7v7h-7v-7z" />
-    </svg>
-  );
-}
-
-function RepoIcon() {
-  return (
-    <svg className={baseIcon} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
     </svg>
   );
 }
@@ -99,8 +90,7 @@ const DEFAULT_ENTRIES: Array<NavEntry> = [
   { id: "chat", label: "Chat", icon: <ChatIcon /> },
   { id: "command-center", label: "Command Center", icon: <BoardIcon />, disabled: true, note: "coming soon" },
   { id: "observability", label: "Observability", icon: <BoardIcon /> },
-  { id: "repos", label: "Repos", icon: <RepoIcon /> },
-  { id: "prs", label: "Pull Requests", icon: <PrIcon /> },
+  { id: "wip", label: "WIP", icon: <PrIcon />, note: "Work in Progress" },
   { id: "deployments", label: "Deployments", icon: <DeployIcon /> },
   { id: "docs", label: "Docs", icon: <DocIcon /> },
   { id: "editor", label: "Editor", icon: <EditorIcon />, disabled: true, note: "desktop only" },
