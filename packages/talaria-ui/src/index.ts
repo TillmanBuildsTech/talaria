@@ -27,7 +27,6 @@ export { FolderPicker } from "./components/folder-picker";
 export type { PickedFolder } from "./components/folder-picker";
 export { GitRepoNotice } from "./components/git-repo-notice";
 export { PullRequestDetail } from "./components/pull-request-detail";
-export { RepoPicker } from "./components/repo-picker";
 export { SettingsPage } from "./components/settings-page";
 export { Sidebar } from "./components/sidebar";
 export type {
