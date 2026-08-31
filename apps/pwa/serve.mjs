@@ -19,6 +19,12 @@ import { fileURLToPath } from 'node:url'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { serveTalariaConfig } from './talaria-config.mjs'
+import {
+  isProjectsDocsPath,
+  handleProjectsDocs,
+  sendProjectsDocsResult,
+  readJsonBody,
+} from './projects-docs.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const DIST = join(__dirname, 'dist')
@@ -388,6 +394,25 @@ createServer(async (req, res) => {
       if (req.method !== 'GET') return sendJson(res, 405, { error: 'method not allowed' })
       serveHostDirectory(res, url)
       return
+    }
+
+    // 0.8) Project docs — per-project markdown stored on this Hermes host at
+    // ~/.hermes/projects/<slug>/docs/*.md (OUTSIDE the repo). The web/PWA
+    // GatewayDocsTransport calls /api/v1/projects/<slug>/docs/*; the Hermes
+    // gateway has no such route, so without intercepting here every docs
+    // operation 404'd ("Creating a doc doesn't work"). Serve them locally —
+    // this server runs on the user's Hermes host (P5 local-first).
+    if (isProjectsDocsPath(url.pathname)) {
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204).end()
+        return
+      }
+      const body = await readJsonBody(req)
+      const result = await handleProjectsDocs(
+        { method: req.method, pathname: url.pathname, body },
+        HERMES_HOME
+      )
+      if (sendProjectsDocsResult(res, result)) return
     }
 
     // 1) Gateway API path (chat /v1, sessions /api, multiplex /p) → proxy
