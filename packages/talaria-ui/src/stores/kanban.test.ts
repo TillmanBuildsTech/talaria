@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import db from "../db";
-import { columnForStatus, KANBAN_COLUMNS } from "../services/kanban";
+import { columnForStatus, KanbanAuthError, KANBAN_COLUMNS } from "../services/kanban";
 import { kanbanClient } from "../services/kanban";
 import { STALE_BLOCKED_MS, useKanbanStore } from "./kanban";
 import { useProjectsStore } from "./projects";
@@ -49,7 +49,7 @@ function card(id: string) {
 
 beforeEach(async () => {
   useProjectsStore.setState({ projects: [], activeProjectId: null, loaded: false });
-  useKanbanStore.setState({ board: null, loading: false, error: null, selectedTaskId: null, detail: null, detailLoading: false, autonomy: {} });
+  useKanbanStore.setState({ board: null, loading: false, error: null, authRequired: false, selectedTaskId: null, detail: null, detailLoading: false, autonomy: {} });
   await db.settings.clear();
   vi.clearAllMocks();
 });
@@ -69,6 +69,26 @@ describe("columnForStatus / KANBAN_COLUMNS", () => {
 });
 
 describe("kanban store", () => {
+  it("flags authRequired when the bridge rejects the board read with 401", async () => {
+    (kanbanClient.fetchBoard as any).mockRejectedValue(new KanbanAuthError("kanban board"));
+    await useKanbanStore.getState().loadBoard();
+    expect(useKanbanStore.getState().authRequired).toBe(true);
+    expect(useKanbanStore.getState().error).toMatch(/authentication required/i);
+  });
+
+  it("clears authRequired on a successful load", async () => {
+    useKanbanStore.setState({ authRequired: true });
+    (kanbanClient.fetchBoard as any).mockResolvedValue(board);
+    await useKanbanStore.getState().loadBoard();
+    expect(useKanbanStore.getState().authRequired).toBe(false);
+  });
+
+  it("does not flag authRequired for a non-401 failure", async () => {
+    (kanbanClient.fetchBoard as any).mockRejectedValue(new Error("HTTP 500"));
+    await useKanbanStore.getState().loadBoard();
+    expect(useKanbanStore.getState().authRequired).toBe(false);
+  });
+
   it("loads a board and groups cards into Command Center columns", async () => {
     (kanbanClient.fetchBoard as any).mockResolvedValue(board);
     await useKanbanStore.getState().init();

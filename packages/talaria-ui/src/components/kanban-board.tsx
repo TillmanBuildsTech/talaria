@@ -9,6 +9,7 @@ import { useShallow } from "zustand/react/shallow";
 import { KANBAN_COLUMNS, type KanbanCard, type KanbanStatus } from "../services/kanban";
 import { useKanbanStore } from "../stores/kanban";
 import { useProjectsStore } from "../stores/projects";
+import { hermesClient } from "../services/hermes";
 import { AutonomyDial } from "./autonomy-dial";
 
 const PRIORITY_LABEL: Record<number, string> = { 0: "P3", 1: "P2", 2: "P1", 3: "P0" };
@@ -74,12 +75,13 @@ export function acceptanceCriteria(body: string | null): Array<string> {
   return out;
 }
 
-export function KanbanBoard({ onClose }: { onClose?: () => void }) {
+export function KanbanBoard({ onClose, onOpenSettings }: { onClose?: () => void; onOpenSettings?: () => void }) {
   const activeProject = useProjectsStore(useShallow((s) => s.activeProject()));
 
   const board = useKanbanStore((s) => s.board);
   const loading = useKanbanStore((s) => s.loading);
   const error = useKanbanStore((s) => s.error);
+  const authRequired = useKanbanStore((s) => s.authRequired);
   const loadBoard = useKanbanStore((s) => s.loadBoard);
   const init = useKanbanStore((s) => s.init);
   const selectTask = useKanbanStore((s) => s.selectTask);
@@ -136,6 +138,39 @@ export function KanbanBoard({ onClose }: { onClose?: () => void }) {
 
       {/* Board area */}
       <div className="flex-1 flex overflow-hidden">
+      {authRequired ? (
+        <div className="flex-1 flex items-center justify-center p-6">
+          <div className="max-w-sm w-full rounded-xl border border-red-500/40 bg-red-950/30 p-6 text-center">
+            <div className="text-3xl mb-3">🔒</div>
+            <h3 className="text-sm font-semibold text-red-300 mb-1">Board locked — API key required</h3>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              The Hermes server at <code className="text-slate-300">{hermesClient.gatewayRoot() || "(current origin)"}</code>{" "}
+              rejected the request with <code className="text-slate-300">401 Unauthorized</code>. The board is only served with a valid
+              Hermes API key.
+            </p>
+            <div className="flex gap-2 mt-4">
+              {onOpenSettings && (
+                <button
+                  type="button"
+                  onClick={onOpenSettings}
+                  className="flex-1 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-xs font-medium text-white transition-colors"
+                >
+                  Open Settings
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={loadBoard}
+                className="flex-1 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 transition-colors"
+              >
+                Retry
+              </button>
+            </div>
+            <p className="text-[10px] text-slate-500 mt-3">Settings → API Key, then Save &amp; Reconnect.</p>
+          </div>
+        </div>
+      ) : (
+      <>
       {/* Board columns */}
       <div className="flex-1 flex gap-3 px-4 py-3 overflow-x-auto">
         {KANBAN_COLUMNS.map((col) => {
@@ -215,6 +250,8 @@ export function KanbanBoard({ onClose }: { onClose?: () => void }) {
         <div className="absolute bottom-3 right-3 z-20 px-3 py-2 rounded-lg bg-red-950 border border-red-500/40 text-xs text-red-300">
           {error}
         </div>
+      )}
+      </>
       )}
       </div>
     </div>

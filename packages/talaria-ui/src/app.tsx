@@ -314,7 +314,7 @@ export function App() {
           </div>
         ) : module === "command-center" ? (
           <div className="flex-1 min-h-0">
-            <KanbanBoard />
+            <KanbanBoard onOpenSettings={() => setModule("settings")} />
           </div>
         ) : module === "editor" ? (
           <div className="flex-1 min-h-0">

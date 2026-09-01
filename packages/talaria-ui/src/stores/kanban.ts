@@ -15,6 +15,7 @@ import { create } from "zustand";
 import db from "../db";
 import {
   columnForStatus,
+  KanbanAuthError,
   kanbanClient,
   type AutonomyMode,
   type KanbanBoard,
@@ -35,6 +36,10 @@ export type KanbanState = {
   board: KanbanBoard | null;
   loading: boolean;
   error: string | null;
+  // True when the last board/task request was rejected for authentication
+  // (HTTP 401) — the bridge is key-gated, so a missing/wrong app key is the
+  // usual cause. The UI turns this into a "set your API key" prompt.
+  authRequired: boolean;
 
   // Selected task detail.
   selectedTaskId: string | null;
@@ -81,6 +86,7 @@ export const useKanbanStore = create<KanbanState>((set, get) => ({
   board: null,
   loading: false,
   error: null,
+  authRequired: false,
   selectedTaskId: null,
   detail: null,
   detailLoading: false,
@@ -104,12 +110,13 @@ export const useKanbanStore = create<KanbanState>((set, get) => ({
     // correct board. Global/unassigned → default board.
     const scope = useProjectsStore.getState().scopeForCreate();
     const slug = scope ? useProjectsStore.getState().projects.find((p) => p.id === scope)?.slug : "";
-    set({ loading: true, error: null });
+    set({ loading: true, error: null, authRequired: false });
     try {
       const board = await kanbanClient.fetchBoard(slug);
       set({ board, loading: false });
     } catch (err) {
-      set({ loading: false, error: err instanceof Error ? err.message : String(err) });
+      const isAuth = err instanceof KanbanAuthError;
+      set({ loading: false, error: err instanceof Error ? err.message : String(err), authRequired: isAuth });
     }
   },
 
@@ -123,9 +130,10 @@ export const useKanbanStore = create<KanbanState>((set, get) => ({
     const slug = scope ? useProjectsStore.getState().projects.find((p) => p.id === scope)?.slug : "";
     try {
       const detail = await kanbanClient.fetchTask(taskId, slug);
-      set({ detail, detailLoading: false });
+      set({ detail, detailLoading: false, authRequired: false });
     } catch (err) {
-      set({ detailLoading: false, error: err instanceof Error ? err.message : String(err) });
+      const isAuth = err instanceof KanbanAuthError;
+      set({ detailLoading: false, error: err instanceof Error ? err.message : String(err), authRequired: isAuth });
     }
   },
 
