@@ -1,0 +1,305 @@
+// Shared Vercel API-key store — server-side, encrypted at rest.
+//
+// The deployments tab needs a default Vercel API key to trigger deployments.
+// That key is a credential, so it must NEVER reach the browser, and must not
+// sit in plaintext on disk. This module owns the whole lifecycle:
+//
+//   - setVercelApiKey(apiKey)  — encrypt + persist the key (AES-256-GCM)
+//   - getVercelApiKey()        — SERVER-ONLY read (decrypts) for deployment code
+//   - vercelKeyConfigured()    — cheap boolean gate (no decrypt needed)
+//   - serveVercelKey(req,res)  — HTTP surface for the browser:
+//                                  GET /api/deployments/vercel-key
+//                                    -> { configured: true|false }  (never the key)
+//                                  PUT /api/deployments/vercel-key  { apiKey }
+//                                    -> { configured: true }        (never echoes)
+//
+// Encryption: AES-256-GCM, key derived from a host secret. The master key comes
+// from env TALARIA_MASTER_KEY (or TALARIA_SECRET) when present; otherwise a
+// random 32-byte key is generated once and persisted at
+// <home>/talaria/.master.key (mode 0600). The ciphertext + IV + auth tag live
+// at <home>/talaria/vercel-key.json (mode 0600). At rest the file alone cannot
+// be read without the master key, and the browser never receives either.
+//
+// Served on EVERY path the app actually uses (same rule as talaria-config.mjs):
+//   - serve.mjs (production/static host + the :8643 bridge) → serveVercelKey
+//   - the Vite dev server (talaria-dev.service → Caddy)     → serveVercelKey
+// via a middleware plugin in vite.config.ts.
+
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+  timingSafeEqual,
+} from 'node:crypto'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs'
+import { join } from 'node:path'
+import { readApiServerKey } from './talaria-config.mjs'
+
+// Resolve the REAL Hermes home root (unwraps a profile-scoped HERMES_HOME to
+// the parent root, mirroring talaria-config.mjs / serve.mjs kanbanHome()).
+export function hermesHomeRoot(env = process.env) {
+  const home = env.HERMES_HOME || ''
+  const m = home.match(/^(.+)\/profiles\/[^/]+\/?$/)
+  return (m ? m[1] : home) || '/root/.hermes'
+}
+
+// ── Storage paths ───────────────────────────────────────────────────────────
+
+function secretsDir(home) {
+  return join(home, 'talaria')
+}
+function masterKeyPath(home) {
+  return join(secretsDir(home), '.master.key')
+}
+function payloadPath(home) {
+  return join(secretsDir(home), 'vercel-key.json')
+}
+
+// Load the 32-byte AES master key. Env secret (hex or raw) wins; otherwise a
+// random key is generated once and persisted at mode 0600 so subsequent runs
+// can decrypt what they encrypted before.
+function loadOrCreateMasterKey(home, env) {
+  const fromEnv = env.TALARIA_MASTER_KEY || env.TALARIA_SECRET
+  if (fromEnv) {
+    // Deterministic 32-byte derivation from the env secret.
+    return createHash('sha256').update(String(fromEnv)).digest()
+  }
+  const p = masterKeyPath(home)
+  if (existsSync(p)) {
+    const hex = readFileSync(p, 'utf8').trim()
+    if (hex) return Buffer.from(hex, 'hex')
+  }
+  mkdirSync(secretsDir(home), { recursive: true })
+  const key = randomBytes(32)
+  writeFileSync(p, key.toString('hex'), { mode: 0o600 })
+  chmodSync(p, 0o600)
+  return key
+}
+
+// ── Primitives (unit-testable, pure) ────────────────────────────────────────
+
+// Encrypt a plaintext string with AES-256-GCM. Returns the components needed
+// to decrypt (base64). Never stores or returns the raw plaintext.
+export function encryptSecret(key, plaintext) {
+  const iv = randomBytes(12)
+  const cipher = createCipheriv('aes-256-gcm', key, iv)
+  const enc = Buffer.concat([cipher.update(String(plaintext), 'utf8'), cipher.final()])
+  const authTag = cipher.getAuthTag()
+  return {
+    iv: iv.toString('base64'),
+    authTag: authTag.toString('base64'),
+    data: enc.toString('base64'),
+  }
+}
+
+// Decrypt an { iv, authTag, data } bundle. Throws on tampering (GCM auth tag
+// mismatch) or bad keys — callers treat a throw as "unreadable".
+export function decryptSecret(key, bundle) {
+  const iv = Buffer.from(bundle.iv, 'base64')
+  const authTag = Buffer.from(bundle.authTag, 'base64')
+  const data = Buffer.from(bundle.data, 'base64')
+  const decipher = createDecipheriv('aes-256-gcm', key, iv)
+  decipher.setAuthTag(authTag)
+  return Buffer.concat([decipher.update(data), decipher.final()]).toString('utf8')
+}
+
+// ── Persistence ─────────────────────────────────────────────────────────────
+
+function readBundle(home) {
+  const p = payloadPath(home)
+  if (!existsSync(p)) return null
+  try {
+    return JSON.parse(readFileSync(p, 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+function writeBundle(home, bundle) {
+  mkdirSync(secretsDir(home), { recursive: true })
+  writeFileSync(payloadPath(home), JSON.stringify(bundle), { mode: 0o600 })
+  chmodSync(payloadPath(home), 0o600)
+}
+
+// ── Public API (server-side) ────────────────────────────────────────────────
+
+// Basic sanity validation for a pasted Vercel API token, so a typo'd or
+// truncated value is rejected at save time instead of stored as "configured".
+// Vercel access tokens are opaque alphanumeric strings (typically 20+ chars,
+// no whitespace), so this deliberately-permissive check only catches obvious
+// mistakes — whitespace, URL-like text, or implausibly short/long values — and
+// never a real token. Returns an error string, or null when the value looks
+// plausible.
+const VERCEL_KEY_MIN_LENGTH = 20
+const VERCEL_KEY_MAX_LENGTH = 512
+const VERCEL_KEY_CHARS = /^[A-Za-z0-9_.-]+$/
+export function validateVercelApiKey(value) {
+  const trimmed = String(value ?? '').trim()
+  if (!trimmed) return 'apiKey is required'
+  if (trimmed.length < VERCEL_KEY_MIN_LENGTH) {
+    return `apiKey looks too short (min ${VERCEL_KEY_MIN_LENGTH} chars)`
+  }
+  if (trimmed.length > VERCEL_KEY_MAX_LENGTH) {
+    return `apiKey exceeds ${VERCEL_KEY_MAX_LENGTH} chars`
+  }
+  if (/\s/.test(trimmed)) return 'apiKey must not contain whitespace'
+  if (!VERCEL_KEY_CHARS.test(trimmed)) {
+    return 'apiKey contains unsupported characters'
+  }
+  return null
+}
+
+// Replace the default Vercel API key. Returns { configured: true } once stored.
+export function setVercelApiKey(apiKey, opts = {}) {
+  const home = opts.home || hermesHomeRoot(opts.env || process.env)
+  const env = opts.env || process.env
+  const trimmed = String(apiKey || '').trim()
+  const invalid = validateVercelApiKey(trimmed)
+  if (invalid) throw new Error(invalid)
+  const key = loadOrCreateMasterKey(home, env)
+  writeBundle(home, { enc: encryptSecret(key, trimmed) })
+  return { configured: true }
+}
+
+// SERVER-ONLY read: decrypt and return the full key for deployment code. Never
+// called from the browser path — only from server-side deployment logic.
+export function getVercelApiKey(opts = {}) {
+  const home = opts.home || hermesHomeRoot(opts.env || process.env)
+  const env = opts.env || process.env
+  const bundle = readBundle(home)
+  if (!bundle || !bundle.enc) return null
+  try {
+    return decryptSecret(loadOrCreateMasterKey(home, env), bundle.enc)
+  } catch {
+    // Unreadable (tampered / wrong master key) — treat as not configured.
+    return null
+  }
+}
+
+// Cheap boolean gate for the browser-facing endpoint. Returns only whether a
+// key is configured — never the key itself.
+//
+// IMPORTANT: this deliberately does NOT decrypt the payload (unlike
+// getVercelApiKey). It only checks that a persisted payload exists and parses
+// as an object with an `enc` field. Because the payload is a single JSON
+// object we wrote ourselves, a readable bundle with `enc` present implies a
+// configured key — no AES-256-GCM decrypt needed on the GET path. A missing
+// file, or a tampered/migrated payload that no longer has an `enc` field, is
+// treated as "not configured" (documented: a corrupt store is as good as none
+// until it is overwritten).
+export function vercelKeyConfigured(opts = {}) {
+  const home = opts.home || hermesHomeRoot(opts.env || process.env)
+  const bundle = readBundle(home)
+  return !!(bundle && bundle.enc)
+}
+
+function sendJson(res, status, obj) {
+  res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+  res.end(JSON.stringify(obj))
+}
+
+// ── Write auth ──────────────────────────────────────────────────────────────
+//
+// The PUT overwrites a stored credential, so it must not be callable by
+// anyone who can reach the port. We gate it behind the SAME Bearer key the app
+// already uses to authenticate every other /api request (the Hermes gateway
+// API_SERVER_KEY / base key). That keeps one auth model across the surface:
+// the browser sends `Authorization: Bearer <baseKey>` exactly as it does for
+// /api/v1 chat etc. GET stays open (it returns only { configured }, never the
+// key). The expected key is resolved the same way buildTalariaConfig resolves
+// `base` (host .env → TALARIA_BASE_KEY fallback for container deployments).
+
+// Constant-time compare of two strings (length checked first so timingSafeEqual
+// never throws on a size mismatch — a plain !== would also work, but this
+// avoids early-exit length timing).
+function safeEqual(a, b) {
+  const ab = Buffer.from(String(a), 'utf8')
+  const bb = Buffer.from(String(b), 'utf8')
+  if (ab.length !== bb.length) return false
+  return timingSafeEqual(ab, bb)
+}
+
+// The Bearer key that authorizes writes. Resolved from the host env exactly
+// like the base key the app is provisioned with (see buildTalariaConfig).
+function expectedWriteKey({ home = hermesHomeRoot(), env = process.env } = {}) {
+  return readApiServerKey(join(home, '.env')) || env.TALARIA_BASE_KEY || ''
+}
+
+// True when the request carries the expected Bearer key on its PUT.
+export function vercelKeyWriteAuthorized(req, opts) {
+  const header = req.headers?.authorization || ''
+  const m = header.match(/^Bearer\s+(\S+)$/)
+  if (!m) return false
+  const expected = expectedWriteKey(opts)
+  return !!expected && safeEqual(m[1], expected)
+}
+
+// HTTP surface for the browser (used by serve.mjs AND the Vite dev middleware):
+//   GET /api/deployments/vercel-key  -> { configured: true|false }
+//   PUT /api/deployments/vercel-key  body { apiKey }  -> { configured: true }
+// The full key is never present in any response. OPTIONS is answered for CORS.
+// `opts` is the same shape the module's pure functions take ({ home, env }),
+// used by tests to isolate storage + auth to a temp home; production callers
+// omit it and get the real host paths.
+export async function serveVercelKey(req, res, opts = {}) {
+  const method = req.method
+  if (method === 'OPTIONS') {
+    res.writeHead(204).end()
+    return
+  }
+  if (method === 'GET') {
+    sendJson(res, 200, { configured: vercelKeyConfigured(opts) })
+    return
+  }
+  if (method === 'PUT') {
+    // Writes are gated behind the gateway Bearer key (same auth as /api).
+    if (!vercelKeyWriteAuthorized(req, opts)) {
+      return sendJson(res, 401, { error: 'unauthorized' })
+    }
+    // Bounded read (SEC-F4): reject oversized bodies early so a malicious or
+    // buggy client can't exhaust memory. A Vercel API key is ~20–60 chars, so
+    // a 4 KB cap is far beyond any legitimate PUT while still tiny.
+    const MAX_PUT_BODY_BYTES = 4 * 1024
+    let body = ''
+    let size = 0
+    try {
+      for await (const chunk of req) {
+        size += chunk.length
+        if (size > MAX_PUT_BODY_BYTES) {
+          return sendJson(res, 413, { error: 'request body too large' })
+        }
+        body += chunk
+      }
+    } catch (err) {
+      return sendJson(res, 400, { error: 'could not read request body' })
+    }
+    let parsed
+    try {
+      parsed = JSON.parse(body || '{}')
+    } catch {
+      return sendJson(res, 400, { error: 'invalid JSON body' })
+    }
+    const apiKey = parsed?.apiKey
+    // Basic format validation (VAL-F9): reject a typo'd / truncated key at
+    // save time rather than storing any non-empty string as configured.
+    const invalid = validateVercelApiKey(apiKey)
+    if (invalid) {
+      return sendJson(res, 400, { error: invalid })
+    }
+    try {
+      setVercelApiKey(apiKey, opts)
+    } catch (err) {
+      return sendJson(res, 500, { error: err instanceof Error ? err.message : 'could not store key' })
+    }
+    // Never echo the key back.
+    return sendJson(res, 200, { configured: true })
+  }
+  return sendJson(res, 405, { error: 'method not allowed' })
+}

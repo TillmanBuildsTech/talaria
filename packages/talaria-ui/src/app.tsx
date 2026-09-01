@@ -7,12 +7,11 @@ import { Deployments } from "./components/deployments";
 import { NavRail, type NavModuleId } from "./components/nav-rail";
 import { DocsEditor } from "./components/docs-editor";
 import { Observability } from "./components/observability";
-import { PrPanel } from "./components/pr-panel";
 import { KanbanBoard } from "./components/kanban-board";
 import { ProjectPicker } from "./components/project-picker";
-import { RepoBrowser } from "./components/repo-browser";
 import { SettingsPage } from "./components/settings-page";
 import { Sidebar } from "./components/sidebar";
+import { WipView } from "./components/wip-view";
 import { useChatStore } from "./stores/chat";
 import { useGitHubStore } from "./stores/github";
 import { useDocsStore } from "./stores/docs";
@@ -301,13 +300,9 @@ export function App() {
           <div className="flex-1 min-h-0">
             <Observability />
           </div>
-        ) : module === "repos" ? (
+        ) : module === "wip" ? (
           <div className="flex-1 min-h-0">
-            <RepoBrowser />
-          </div>
-        ) : module === "prs" ? (
-          <div className="flex-1 min-h-0">
-            <PrPanel onClose={() => setModule("chat")} />
+            <WipView />
           </div>
         ) : module === "deployments" ? (
           <div className="flex-1 min-h-0">

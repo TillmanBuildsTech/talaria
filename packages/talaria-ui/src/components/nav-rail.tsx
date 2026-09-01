@@ -8,8 +8,7 @@ export type NavModuleId =
   | "chat"
   | "command-center"
   | "observability"
-  | "repos"
-  | "prs"
+  | "wip"
   | "deployments"
   | "docs"
   | "editor"
@@ -21,6 +20,8 @@ export type NavEntry = {
   icon: ReactNode;
   disabled?: boolean;
   note?: string;
+  /** Pin the entry to the bottom of the rail (e.g. Settings). */
+  footer?: boolean;
 };
 
 const baseIcon = "w-5 h-5 shrink-0";
@@ -37,14 +38,6 @@ function BoardIcon() {
   return (
     <svg className={baseIcon} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h7v7H3V3zm11 0h7v7h-7V3zM3 14h7v7H3v-7zm11 0h7v7h-7v-7z" />
-    </svg>
-  );
-}
-
-function RepoIcon() {
-  return (
-    <svg className={baseIcon} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
     </svg>
   );
 }
@@ -88,7 +81,7 @@ function SettingsIcon() {
         strokeLinecap="round"
         strokeLinejoin="round"
         strokeWidth={2}
-        d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c-1.543.426 1.756 2.924 0 3.35a1.724 1.724 0 00-2.573-1.066c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543-.826-3.31-2.37-2.37a1.724 1.724 0 00-2.573 1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-2.573 1.066c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37a1.724 1.724 0 00-2.573 1.066c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+        d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
       />
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
     </svg>
@@ -97,14 +90,13 @@ function SettingsIcon() {
 
 const DEFAULT_ENTRIES: Array<NavEntry> = [
   { id: "chat", label: "Chat", icon: <ChatIcon /> },
-  { id: "command-center", label: "Command Center", icon: <BoardIcon />, disabled: true, note: "coming soon" },
+  { id: "command-center", label: "Command Center", icon: <BoardIcon /> },
   { id: "observability", label: "Observability", icon: <BoardIcon /> },
-  { id: "repos", label: "Repos", icon: <RepoIcon /> },
-  { id: "prs", label: "Pull Requests", icon: <PrIcon /> },
+  { id: "wip", label: "WIP", icon: <PrIcon />, note: "Work in Progress" },
   { id: "deployments", label: "Deployments", icon: <DeployIcon /> },
   { id: "docs", label: "Docs", icon: <DocIcon /> },
   { id: "editor", label: "Editor", icon: <EditorIcon />, disabled: true, note: "desktop only" },
-  { id: "settings", label: "Settings", icon: <SettingsIcon /> },
+  { id: "settings", label: "Settings", icon: <SettingsIcon />, footer: true },
 ];
 
 export function NavRail({
@@ -116,36 +108,47 @@ export function NavRail({
   onSelect: (id: NavModuleId) => void;
   entries?: Array<NavEntry>;
 }) {
+  const mainEntries = entries.filter((entry) => !entry.footer);
+  const footerEntries = entries.filter((entry) => entry.footer);
+
+  function renderEntry(entry: NavEntry) {
+    const isActive = active === entry.id;
+    const disabled = entry.disabled;
+    return (
+      <button
+        key={entry.id}
+        type="button"
+        disabled={disabled}
+        onClick={() => onSelect(entry.id)}
+        title={entry.note ? `${entry.label} — ${entry.note}` : entry.label}
+        aria-label={entry.label}
+        aria-current={isActive ? "page" : undefined}
+        className={`w-12 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 transition-colors ${
+          disabled
+            ? "text-slate-600 cursor-not-allowed"
+            : isActive
+              ? "bg-slate-700 text-slate-100"
+              : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+        }`}
+      >
+        {entry.icon}
+        <span className="text-[9px] leading-none tracking-wide">{entry.label}</span>
+      </button>
+    );
+  }
+
   return (
     <nav
       aria-label="Modules"
       className="w-16 shrink-0 border-r border-slate-800 bg-slate-900/60 flex flex-col items-center py-2 gap-1"
     >
-      {entries.map((entry) => {
-        const isActive = active === entry.id;
-        const disabled = entry.disabled;
-        return (
-          <button
-            key={entry.id}
-            type="button"
-            disabled={disabled}
-            onClick={() => onSelect(entry.id)}
-            title={entry.note ? `${entry.label} — ${entry.note}` : entry.label}
-            aria-label={entry.label}
-            aria-current={isActive ? "page" : undefined}
-            className={`w-12 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 transition-colors ${
-              disabled
-                ? "text-slate-600 cursor-not-allowed"
-                : isActive
-                ? "bg-slate-700 text-slate-100"
-                : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"
-            }`}
-          >
-            {entry.icon}
-            <span className="text-[9px] leading-none tracking-wide">{entry.label}</span>
-          </button>
-        );
-      })}
+      {mainEntries.map(renderEntry)}
+      {footerEntries.length > 0 && (
+        <>
+          <div className="flex-1" />
+          {footerEntries.map(renderEntry)}
+        </>
+      )}
     </nav>
   );
 }

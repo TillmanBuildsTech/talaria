@@ -9,6 +9,9 @@ type ChatInputProps = {
 
 export function ChatInput({ onSend, onStop }: ChatInputProps) {
   const activeGroupMembers = useChatStore(useShallow((s) => s.activeGroupMembers()));
+  const activeAgentIds = useChatStore(
+    useShallow((s) => s.conversations.find((c) => c.id === s.activeConversationId)?.agentIds ?? []),
+  );
   const isStreaming = useChatStore((s) => s.isStreaming());
   const agentColor = useChatStore((s) => s.agentColor);
   const agentDisplay = useChatStore((s) => s.agentDisplay);
@@ -17,11 +20,13 @@ export function ChatInput({ onSend, onStop }: ChatInputProps) {
   const [text, setText] = useState("");
   const inputEl = useRef<HTMLTextAreaElement>(null);
 
+  // Profile-aware placeholder: a DM (or single-member group) names the agent,
+  // the default profile (no agentIds) falls back to the Hermes brand.
   const placeholder =
-    activeGroupMembers.length > 1
+    activeAgentIds.length > 1
       ? "Message the group (@agent to direct)…"
-      : activeGroupMembers.length === 1
-        ? `Message ${agentDisplay(activeGroupMembers[0])}…`
+      : activeAgentIds.length === 1
+        ? `Message ${agentDisplay(activeAgentIds[0])}…`
         : "Message Hermes…";
 
   // Slash-command suggestion popover.

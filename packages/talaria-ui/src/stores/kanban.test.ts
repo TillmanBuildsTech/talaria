@@ -152,4 +152,79 @@ describe("kanban store", () => {
     expect(kanbanClient.unblockTask).toHaveBeenCalledWith("t8", "");
     expect(kanbanClient.fetchBoard).toHaveBeenCalledTimes(2);
   });
+
+  it("scopes board fetches to the active project slug", async () => {
+    useProjectsStore.setState({
+      projects: [{ id: "p1", name: "Talaria", slug: "talaria", color: "red", folder: "/x", isGitRepo: true, created_at: Date.now() } as any],
+      activeProjectId: "p1",
+    });
+    (kanbanClient.fetchBoard as any).mockResolvedValue(board);
+    await useKanbanStore.getState().loadBoard();
+    expect(kanbanClient.fetchBoard).toHaveBeenCalledWith("talaria");
+  });
+
+  it("re-fetches the new board when the active project changes", async () => {
+    useProjectsStore.setState({
+      projects: [
+        { id: "p1", name: "Talaria", slug: "talaria", color: "red", folder: "/x", isGitRepo: true, created_at: Date.now() } as any,
+        { id: "p2", name: "Other", slug: "other", color: "blue", folder: "/y", isGitRepo: true, created_at: Date.now() } as any,
+      ],
+      activeProjectId: "p1",
+    });
+    (kanbanClient.fetchBoard as any).mockResolvedValue(board);
+    await useKanbanStore.getState().loadBoard();
+    expect(kanbanClient.fetchBoard).toHaveBeenLastCalledWith("talaria");
+
+    useProjectsStore.setState({ activeProjectId: "p2" });
+    await useKanbanStore.getState().loadBoard();
+    expect(kanbanClient.fetchBoard).toHaveBeenLastCalledWith("other");
+  });
+
+  it("renders an empty board without throwing", async () => {
+    (kanbanClient.fetchBoard as any).mockResolvedValue({ board: "talaria", exists: false, columns: {} });
+    await useKanbanStore.getState().loadBoard();
+    expect(useKanbanStore.getState().board?.exists).toBe(false);
+    expect(useKanbanStore.getState().error).toBeNull();
+    for (const col of ["triage", "todo", "running", "review", "blocked", "done"]) {
+      expect(useKanbanStore.getState().cardsIn(col as any)).toEqual([]);
+    }
+  });
+
+  it("surfaces a load error instead of silently clearing the board", async () => {
+    (kanbanClient.fetchBoard as any).mockRejectedValue(new Error("kanban board HTTP 404"));
+    await useKanbanStore.getState().loadBoard();
+    expect(useKanbanStore.getState().error).toContain("404");
+    expect(useKanbanStore.getState().loading).toBe(false);
+    expect(useKanbanStore.getState().board).toBeNull();
+  });
+
+  it("hides archived cards from the Done column", async () => {
+    const withArchived = {
+      ...board,
+      columns: {
+        ...board.columns,
+        done: [...board.columns.done, { id: "ta1", title: "archived task", status: "archived", priority: 0, created_at: Date.now(), assignee: "dev" }],
+      },
+    };
+    (kanbanClient.fetchBoard as any).mockResolvedValue(withArchived);
+    await useKanbanStore.getState().loadBoard();
+    const done = useKanbanStore.getState().cardsIn("done").map((c) => c.id);
+    expect(done).toEqual(["t9"]);
+    expect(done).not.toContain("ta1");
+  });
+
+  it("hides archived cards even when served under an archived column key", async () => {
+    const withArchivedColumn = {
+      ...board,
+      columns: {
+        ...board.columns,
+        archived: [{ id: "ta2", title: "archived task", status: "archived", priority: 0, created_at: Date.now(), assignee: "dev" }],
+      },
+    };
+    (kanbanClient.fetchBoard as any).mockResolvedValue(withArchivedColumn);
+    await useKanbanStore.getState().loadBoard();
+    const done = useKanbanStore.getState().cardsIn("done").map((c) => c.id);
+    expect(done).toEqual(["t9"]);
+    expect(done).not.toContain("ta2");
+  });
 });
