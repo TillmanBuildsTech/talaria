@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hermesClient } from "./hermes";
-import { kanbanClient } from "./kanban";
+import { kanbanClient, KanbanAuthError } from "./kanban";
 
 // Regression test for "kanban connection not working no matter which URL I
 // try": the kanban client used to hardcode the same-origin path /kanban-api/*,
@@ -56,5 +56,17 @@ describe("kanban client routing", () => {
         headers: expect.objectContaining({ Authorization: "Bearer k" }),
       })
     );
+  });
+
+  it("surfaces a 401 (missing/wrong key) as a KanbanAuthError so the UI can prompt the user", async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 401, json: async () => ({ error: "unauthorized" }) });
+    await expect(kanbanClient.fetchBoard()).rejects.toBeInstanceOf(KanbanAuthError);
+    await expect(kanbanClient.fetchTask("t1")).rejects.toBeInstanceOf(KanbanAuthError);
+  });
+
+  it("keeps a non-401 failure as a plain error with the bridge detail", async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 500, json: async () => ({ error: "boom" }) });
+    await expect(kanbanClient.fetchBoard()).rejects.toThrow("HTTP 500: boom");
+    await expect(kanbanClient.fetchBoard()).rejects.not.toBeInstanceOf(KanbanAuthError);
   });
 });
