@@ -14,6 +14,7 @@ import { request as httpsRequest } from 'node:https'
 import { readFile, readdir } from 'node:fs/promises'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
+import { timingSafeEqual } from 'node:crypto'
 import { extname, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { dirname } from 'node:path'
@@ -349,8 +350,41 @@ function runKanbanCli(board, args) {
 }
 
 function sendJson(res, status, obj) {
-  res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+  res.writeHead(status, {
+    'Content-Type': 'application/json',
+    'Cache-Control': 'no-store',
+    ...KANBAN_CORS
+  })
   res.end(JSON.stringify(obj))
+}
+
+// The kanban bridge reads the live Hermes board and shells `hermes kanban`
+// CLI writes. Now that the app can reach it cross-origin (Tauri desktop →
+// https://hermes.tillmanbuildstech.com/kanban-api/*), guard it with the same
+// bearer key the client sends for chat, and allow those cross-origin reads.
+const KANBAN_CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Authorization, Content-Type, Accept',
+  'Access-Control-Max-Age': '86400'
+}
+
+// Expected key, read from the host's Hermes env (same source as serveConfig's
+// base key). Empty → bridge stays open (trusted/local net, no key configured).
+const KANBAN_KEY = readApiServerKey(join(HERMES_HOME, '.env'))
+
+function constantTimeEq(a, b) {
+  const A = Buffer.from(String(a || ''))
+  const B = Buffer.from(String(b || ''))
+  return A.length === B.length && timingSafeEqual(A, B)
+}
+
+// Require Authorization: Bearer <KANBAN_KEY> when a key is configured. The
+// client always sends its apiKey, so enforcement never breaks the PWA.
+function authorizeKanban(req) {
+  if (!KANBAN_KEY) return true
+  const m = (req.headers.authorization || '').match(/^Bearer\s+(.+)$/i)
+  return !!m && constantTimeEq(m[1], KANBAN_KEY)
 }
 
 async function serveKanban(req, res, url) {
@@ -437,10 +471,15 @@ createServer(async (req, res) => {
       return
     }
 
-    // 0.5) Kanban bridge — live Hermes board reads + hygiene writes
+    // 0.5) Kanban bridge — live Hermes board reads + hygiene writes.
+    //      CORS + bearer auth so the Tauri desktop (cross-origin) can reach it.
     if (url.pathname === '/kanban-api/board' || url.pathname.startsWith('/kanban-api/tasks/')) {
       if (req.method === 'OPTIONS') {
-        res.writeHead(204).end()
+        res.writeHead(204, KANBAN_CORS).end()
+        return
+      }
+      if (!authorizeKanban(req)) {
+        sendJson(res, 401, { error: 'unauthorized' })
         return
       }
       await serveKanban(req, res, url)

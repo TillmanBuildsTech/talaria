@@ -85,6 +85,10 @@ export default defineConfig(({ mode }) => {
         "/v1": { target: "http://localhost:8642", changeOrigin: true, configure: (p) => p.on("proxyReq", stripBrowserHeaders) },
         "/p": { target: "http://localhost:8642", changeOrigin: true, configure: (p) => p.on("proxyReq", stripBrowserHeaders) },
         "/api": { target: "http://localhost:8642", changeOrigin: true, configure: (p) => p.on("proxyReq", stripBrowserHeaders) },
+        // The kanban bridge lives in serve.mjs (reads the Hermes SQLite board),
+        // NOT on the gateway — so it needs its own proxy target. serve.mjs must
+        // be running (PORT=8643, HERMES_HOME set) for dev kanban to work.
+        "/kanban-api": { target: "http://localhost:8643", changeOrigin: true, configure: (p) => p.on("proxyReq", stripBrowserHeaders) },
       },
     },
   };
