@@ -5,8 +5,9 @@
 import { useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import type { Project } from "../db";
-import { useProjectsStore } from "../stores/projects";
+import { projectFolder, useProjectsStore } from "../stores/projects";
 import { ProjectSettingsDialog } from "./project-settings-dialog";
+import { FolderPicker, type PickedFolder } from "./folder-picker";
 
 const GLOBAL_COLOR = "#64748b";
 
@@ -20,6 +21,7 @@ export function ProjectPicker() {
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
+  const [pickedFolder, setPickedFolder] = useState<PickedFolder | null>(null);
   const [settingsProject, setSettingsProject] = useState<Project | null>(null);
 
   const label = activeProject ? activeProject.name : "Global / Unassigned";
@@ -33,8 +35,13 @@ export function ProjectPicker() {
   async function submitCreate() {
     const name = nameDraft.trim();
     if (!name) return;
-    const created = await createProject({ name });
+    const created = await createProject({
+      name,
+      folder: pickedFolder?.path,
+      isGitRepo: pickedFolder?.isGitRepo,
+    });
     setNameDraft("");
+    setPickedFolder(null);
     setCreating(false);
     await setActiveProject(created.id);
     setOpen(false);
@@ -126,7 +133,7 @@ export function ProjectPicker() {
             )}
 
             {creating ? (
-              <div className="px-3 py-2 border-t border-slate-700/60 flex items-center gap-2">
+              <div className="px-3 py-2 border-t border-slate-700/60 space-y-2">
                 <input
                   autoFocus
                   value={nameDraft}
@@ -140,18 +147,42 @@ export function ProjectPicker() {
                     }
                   }}
                   placeholder="Project name"
-                  className="flex-1 bg-slate-900 text-xs rounded px-2 py-1.5 outline-none ring-1 ring-blue-500 text-slate-100"
+                  className="w-full bg-slate-900 text-xs rounded px-2 py-1.5 outline-none ring-1 ring-blue-500 text-slate-100"
                 />
-                <button
-                  type="button"
-                  onClick={submitCreate}
-                  disabled={!nameDraft.trim()}
-                  className={`px-2 py-1.5 rounded text-xs font-medium transition-colors ${
-                    nameDraft.trim() ? "bg-blue-600 hover:bg-blue-700 text-white" : "bg-slate-700 text-slate-400 cursor-not-allowed"
-                  }`}
-                >
-                  Create
-                </button>
+                {/* Host folder picker (project ↔ folder tie). Defaults to the
+                    slug-derived folder; user can browse + select a git repo. */}
+                <FolderPicker
+                  initialPath={pickedFolder?.path || projectFolder((nameDraft.trim() || "project").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""))}
+                  onPick={(f) => setPickedFolder(f)}
+                />
+                {pickedFolder && (
+                  <p className="text-[10px] text-slate-500 font-mono truncate">
+                    {pickedFolder.path}
+                    {pickedFolder.isGitRepo ? " · git" : " · not a git repo"}
+                  </p>
+                )}
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCreating(false);
+                      setPickedFolder(null);
+                    }}
+                    className="px-2 py-1.5 rounded text-xs text-slate-400 hover:bg-slate-800 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={submitCreate}
+                    disabled={!nameDraft.trim()}
+                    className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+                      nameDraft.trim() ? "bg-blue-600 hover:bg-blue-700 text-white" : "bg-slate-700 text-slate-400 cursor-not-allowed"
+                    }`}
+                  >
+                    Create
+                  </button>
+                </div>
               </div>
             ) : (
               <button

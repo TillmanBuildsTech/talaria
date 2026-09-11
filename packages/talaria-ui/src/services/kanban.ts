@@ -5,6 +5,7 @@
 // & hygiene"). Every write shells the `hermes kanban` CLI server-side so the
 // app and the dispatcher share one code path.
 import { useProjectsStore } from "../stores/projects";
+import { hermesClient } from "./hermes";
 
 export type KanbanStatus =
   | "triage"
@@ -111,41 +112,86 @@ export function activeBoardSlug(): string {
   return p?.slug ?? "";
 }
 
+// Kanban API root. Derive it from the same configured server origin as chat
+// (hermesClient.gatewayRoot) so the board FOLLOWS the URL set in settings —
+// never a hardcoded same-origin path. Same-origin (PWA via serve.mjs, default
+// baseUrl /api/v1) resolves to "" → fetches stay relative /kanban-api/*;
+// cross-origin (Tauri desktop pointed at hermes.tillmanbuildstech.com) resolves
+// to the absolute https://host so the desktop can actually reach the bridge.
+export function kanbanApiBase(): string {
+  return hermesClient.gatewayRoot();
+}
+
 export function boardUrl(path: string, board?: string): string {
   const slug = board ?? activeBoardSlug();
   const q = slug ? `?board=${encodeURIComponent(slug)}` : "";
-  return `${path}${q}`;
+  return `${kanbanApiBase()}${path}${q}`;
+}
+
+// Bearer key shared with the Hermes gateway; the serve.mjs bridge validates it
+// the same way. Only sent when a key is configured (never a bare header).
+function authHeaders(): Record<string, string> {
+  const key = hermesClient.apiKey;
+  return key ? { Authorization: `Bearer ${key}` } : {};
+}
+
+// Thrown when the serve.mjs bridge rejects the request for authentication
+// (HTTP 401). The UI catches this to show a targeted "set your API key"
+// message instead of a generic error — the bridge is key-gated when the host
+// configures an API_SERVER_KEY, so a missing/wrong app key is a common cause
+// of a board that "just won't load".
+export class KanbanAuthError extends Error {
+  constructor(what: string) {
+    super(`${what} rejected: authentication required`);
+    this.name = "KanbanAuthError";
+  }
+}
+
+// Turn a non-2xx bridge response into a thrown error, distinguishing the
+// 401 auth case so the UI can guide the user to configure a key.
+async function throwForStatus(resp: Response, what: string): Promise<never> {
+  if (resp.status === 401) throw new KanbanAuthError(what);
+  let detail = "";
+  try {
+    const body = await resp.json();
+    if (body && typeof body.error === "string") detail = body.error;
+  } catch {
+    /* non-JSON body — fall through to the bare status */
+  }
+  throw new Error(`${what} HTTP ${resp.status}${detail ? `: ${detail}` : ""}`);
 }
 
 class KanbanClient {
   async fetchBoard(board?: string): Promise<KanbanBoard> {
     const r = await fetch(boardUrl("/kanban-api/board", board), {
-      headers: { Accept: "application/json" },
+      headers: { Accept: "application/json", ...authHeaders() },
     });
-    if (!r.ok) throw new Error(`kanban board HTTP ${r.status}`);
+    if (!r.ok) await throwForStatus(r, "kanban board");
     return r.json();
   }
 
   async fetchTask(taskId: string, board?: string): Promise<KanbanTaskDetail> {
     const r = await fetch(boardUrl(`/kanban-api/tasks/${encodeURIComponent(taskId)}`, board), {
-      headers: { Accept: "application/json" },
+      headers: { Accept: "application/json", ...authHeaders() },
     });
-    if (!r.ok) throw new Error(`kanban task HTTP ${r.status}`);
+    if (!r.ok) await throwForStatus(r, "kanban task");
     return r.json();
   }
 
   async archiveTask(taskId: string, board?: string): Promise<void> {
     const r = await fetch(boardUrl(`/kanban-api/tasks/${encodeURIComponent(taskId)}/archive`, board), {
       method: "POST",
+      headers: { ...authHeaders() },
     });
-    if (!r.ok) throw new Error(`kanban archive HTTP ${r.status}`);
+    if (!r.ok) await throwForStatus(r, "kanban archive");
   }
 
   async unblockTask(taskId: string, board?: string): Promise<void> {
     const r = await fetch(boardUrl(`/kanban-api/tasks/${encodeURIComponent(taskId)}/unblock`, board), {
       method: "POST",
+      headers: { ...authHeaders() },
     });
-    if (!r.ok) throw new Error(`kanban unblock HTTP ${r.status}`);
+    if (!r.ok) await throwForStatus(r, "kanban unblock");
   }
 }
 

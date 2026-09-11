@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { useProjectsStore } from "./projects";
+import { PROJECTS_ROOT } from "../services/docs";
+import { projectFolder, useProjectsStore } from "./projects";
 
 // Reset the singleton store state between tests so assertions start clean.
 beforeEach(() => {
@@ -68,5 +69,28 @@ describe("projects store", () => {
     const s = useProjectsStore.getState();
     await s.setActiveProject("does-not-exist");
     expect(s.activeProjectId).toBeNull();
+  });
+
+  it("ties a project to its server folder by default (P9)", async () => {
+    const created = await useProjectsStore.getState().createProject({ name: "ABC Scraper" });
+    expect(created.folder).toBe(`${PROJECTS_ROOT}/abc-scraper`);
+    expect(projectFolder("abc-scraper")).toBe(`${PROJECTS_ROOT}/abc-scraper`);
+  });
+
+  it("allows an explicit folder override on create", async () => {
+    const created = await useProjectsStore.getState().createProject({
+      name: "serv",
+      folder: `${PROJECTS_ROOT}/custom-serv`,
+    });
+    expect(created.folder).toBe(`${PROJECTS_ROOT}/custom-serv`);
+  });
+
+  it("updates the folder via updateProject", async () => {
+    const created = await useProjectsStore.getState().createProject({ name: "abc" });
+    await useProjectsStore.getState().updateProject(created.id, {
+      folder: `${PROJECTS_ROOT}/moved`,
+    });
+    const updated = useProjectsStore.getState().projects.find((p) => p.id === created.id);
+    expect(updated?.folder).toBe(`${PROJECTS_ROOT}/moved`);
   });
 });

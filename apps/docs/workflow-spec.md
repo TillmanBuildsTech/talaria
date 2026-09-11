@@ -444,8 +444,13 @@ buttons call `POST …/reviews` with `{ event, body }` and refresh the PR.
 
 All modules go **into `@talaria/ui` ** (shared brain, P6) and mount from both
 shells via the existing module switcher that M1 adds (`App` gains a
-Command-Center module switcher: Chat / Projects / Kanban / … / **Repos** / 
-**PRs** / **Deployments**). Both PWA and desktop inherit them automatically.
+Command-Center module switcher: Chat / Projects / Kanban / … / **WIP** (combined
+Repos + Pull Requests) / **Deployments**). Both PWA and desktop inherit them
+automatically. The WIP module (`wip-view.tsx`) merges the former Repos and
+Pull Requests tabs into a single "Work in Progress" surface: repos listed with
+an open-PR count chip and, when expanded, that repo's open pull requests
+nested above its branches/commits explorer; PR detail (diff, checks, review,
+gated merge) is preserved.
 
 Suggested component set (all in `@talaria/ui/src/components/` or a new
 `src/modules/github/`):

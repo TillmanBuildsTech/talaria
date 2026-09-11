@@ -60,6 +60,9 @@ export interface DocsTransport {
   read(projectSlug: string, path: string): Promise<ProjectDoc>;
   write(projectSlug: string, path: string, content: string): Promise<void>;
   remove(projectSlug: string, path: string): Promise<void>;
+  // Browse the host filesystem to pick a project's folder (project↔folder tie).
+  // Lists one directory; each subdir reports whether it is a git repo root.
+  listDirectory(path: string): Promise<HostDirListing>;
 }
 
 // ---------------------------------------------------------------------------
@@ -75,6 +78,46 @@ export function docsDir(projectSlug: string): string {
 export function docsFilePath(projectSlug: string, path: string): string {
   return `${docsDir(projectSlug)}/${path}`;
 }
+
+// ---------------------------------------------------------------------------
+// Host directory listing + git detection (project ↔ folder/repo tie, P9)
+// ---------------------------------------------------------------------------
+// Lets the UI browse the host filesystem to pick a project's folder, and tells
+// whether that folder is a git repository. Desktop uses the native fs adapter;
+// web routes through the user's gateway (same host). Both share the contract
+// below so the picker and the git/non-git UX work identically in either shell.
+
+export type HostDirEntry = {
+  name: string;
+  isDir: boolean;
+  // Present only when isDir and the entry is a git repo root (has a .git).
+  isGitRepo?: boolean;
+};
+
+export type HostDirListing = {
+  path: string;
+  entries: Array<HostDirEntry>;
+};
+
+// Detect a git repo root in a folder listing: a ".git" directory entry (or a
+// ".git" file for worktrees/submodules) means the folder is a git checkout.
+export function isGitRoot(entries: Array<HostDirEntry>): boolean {
+  return entries.some((e) => e.name === ".git");
+}
+
+// Normalize a host path for display/safety: collapse //, strip a trailing
+// slash (except root), and reject path traversal beyond the base. Returns the
+// normalized path or null when unsafe.
+export function normalizeHostDir(path: string): string | null {
+  const cleaned = (path || "").replace(/\/+/g, "/").replace(/\/$/, "");
+  if (!cleaned || cleaned.includes("..")) return null;
+  return cleaned;
+}
+
+// The base the picker starts at. Desktop resolves relative to HOME (matches
+// the docs filesystem adapter); web sends the literal path to the gateway.
+export const HOST_DIR_BASE = "~/.hermes/projects";
+
 
 // Normalize a user-entered doc name into a safe, deterministic filename.
 // Lowercases, slugs the base, forces the .md extension, never allows a bare
@@ -133,6 +176,25 @@ export class FilesystemDocsTransport implements DocsTransport {
 
   async remove(projectSlug: string, path: string): Promise<void> {
     await this.fs.removeFile(docsFilePath(projectSlug, path));
+  }
+
+  async listDirectory(path: string): Promise<HostDirListing> {
+    const entries = await this.fs.listDir(path);
+    // For each subdirectory, peek for a .git entry to flag git repo roots.
+    const withGit: Array<HostDirEntry> = await Promise.all(
+      entries.map(async (e) => {
+        if (!e.isDir) return { name: e.name, isDir: false };
+        let isGitRepo = false;
+        try {
+          const children = await this.fs.listDir(`${path}/${e.name}`);
+          isGitRepo = isGitRoot(children);
+        } catch {
+          isGitRepo = false;
+        }
+        return { name: e.name, isDir: true, isGitRepo };
+      })
+    );
+    return { path, entries: withGit };
   }
 }
 
@@ -200,6 +262,17 @@ export class GatewayDocsTransport implements DocsTransport {
       `/api/v1/projects/${encodeURIComponent(projectSlug)}/docs/${this.encodePath(path)}`
     );
   }
+
+  async listDirectory(path: string): Promise<HostDirListing> {
+    const data = await this.req<HostDirListing>(
+      "GET",
+      `/api/v1/host/directory?path=${encodeURIComponent(path)}`
+    );
+    return {
+      path: data?.path ?? path,
+      entries: Array.isArray(data?.entries) ? data.entries : [],
+    };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -230,6 +303,9 @@ export class DocsClient {
   }
   async remove(projectSlug: string, path: string): Promise<void> {
     return this.transport.remove(projectSlug, path);
+  }
+  async listDirectory(path: string): Promise<HostDirListing> {
+    return this.transport.listDirectory(path);
   }
 }
 
