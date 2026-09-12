@@ -41,16 +41,21 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: `pnpm --filter @talaria/pwa preview --port ${previewPort} --strictPort`,
+      // @talaria/ui is consumed as a BUILT artifact (apps/pwa/src/main.tsx
+      // imports "@talaria/ui" → packages/talaria-ui/dist/index.js), so the
+      // package must be rebuilt before the PWA is served. Without this the dev
+      // server happily serves a STALE dist and the smoke suite fails against an
+      // app that no longer exists in source (e.g. resurrected rail modules).
+      command: `pnpm --filter @talaria/ui build && pnpm --filter @talaria/pwa build && pnpm --filter @talaria/pwa preview --port ${previewPort} --strictPort`,
       url: `http://localhost:${previewPort}`,
       reuseExistingServer: true,
-      timeout: 30_000,
+      timeout: 180_000,
     },
     {
-      command: `pnpm --filter @talaria/pwa dev --port ${devPort} --strictPort`,
+      command: `pnpm --filter @talaria/ui build && pnpm --filter @talaria/pwa dev --port ${devPort} --strictPort`,
       url: `http://localhost:${devPort}`,
       reuseExistingServer: true,
-      timeout: 60_000,
+      timeout: 180_000,
     },
   ],
 });

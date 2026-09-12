@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
+import { installGatewayStub } from "./helpers";
 
 // ============================================================================
 // PWA installability checks — gated to the PREVIEW (production build) project.
@@ -101,6 +102,10 @@ test("manifest is linked from index.html", async ({ page }) => {
 });
 
 test("app renders under standalone display context", async ({ page }) => {
+  // Stub the gateway so the chat empty state (the app's boot surface) renders
+  // deterministically instead of whatever conversation history the local
+  // gateway happens to hold.
+  await installGatewayStub(page);
   await page.goto("/");
   await expect(page.getByText("Send a message to start chatting")).toBeVisible();
   // meta viewport + theme-color support standalone chrome.
