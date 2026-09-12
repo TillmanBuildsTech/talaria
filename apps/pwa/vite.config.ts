@@ -19,15 +19,34 @@ export default defineConfig(({ mode }) => {
   const AUTH_USER = env.DEV_AUTH_USER || "";
   const AUTH_PASS = env.DEV_AUTH_PASS || "";
 
-  // Minimal dev-server basic auth. Gates everything except /api, which is
-  // already protected by the Hermes gateway's own Bearer key. Mirrors the
-  // Hermes dashboard basic-auth pattern. Credentials come from server-side
-  // .env vars (DEV_AUTH_USER / DEV_AUTH_PASS) and never reach the client.
+  // Path families that carry their OWN Bearer auth (the Hermes gateway API key)
+  // and must therefore NOT be gated by dev basic auth. The browser sends an
+  // explicit `Authorization: Bearer <key>` on every one of these, which
+  // OVERRIDES the browser's cached Basic credentials — so a Basic challenge
+  // here can never be satisfied, and Chrome re-pops the login dialog on each
+  // retry (the endless "the login just comes back again" loop). Mirrors
+  // isGatewayPath() in serve.mjs: chat /v1/*, multiplex /p/<profile>/*,
+  // sessions /api/*, plus the local /kanban-api bridge. The gateway (and the
+  // serve.mjs kanban bridge) authenticate all of them with their own key.
+  const isGatewayPath = (pathname: string) =>
+    pathname === "/api" ||
+    pathname.startsWith("/api/") ||
+    pathname === "/v1" ||
+    pathname.startsWith("/v1/") ||
+    pathname.startsWith("/p/") ||
+    pathname === "/kanban-api" ||
+    pathname.startsWith("/kanban-api/");
+
+  // Minimal dev-server basic auth. Gates the app shell + assets (everything
+  // except the bearer-guarded gateway paths above). Mirrors the Hermes
+  // dashboard basic-auth pattern. Credentials come from server-side .env vars
+  // (DEV_AUTH_USER / DEV_AUTH_PASS) and never reach the client.
   const devBasicAuth = () => ({
     name: "dev-basic-auth",
     configureServer(server: { middlewares: { use: (fn: (req: IncomingMessage, res: ServerResponse, next: () => void) => void) => void } }) {
       server.middlewares.use((req, res, next) => {
-        if (AUTH_USER && AUTH_PASS && !req.url?.startsWith("/api")) {
+        const pathname = req.url?.split("?")[0] ?? "";
+        if (AUTH_USER && AUTH_PASS && !isGatewayPath(pathname)) {
           const header = req.headers.authorization || "";
           const [scheme, encoded] = header.split(" ");
           let ok = false;

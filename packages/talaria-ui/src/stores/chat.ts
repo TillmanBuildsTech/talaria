@@ -93,6 +93,9 @@ export type ChatState = {
   // agentName -> { model, provider, contextLength } (from /talaria-config;
   // the models Hermes is actually configured to run per profile).
   modelsMap: Record<string, ModelInfo>;
+  // Fallback models from every profile's `fallback_providers` (from
+  // /talaria-config). Real configured models, offered ungated.
+  fallbackModels: Array<ModelInfo>;
   // Model providers the host has credentials for (from /talaria-config, read
   // from the host's .env files). Only their models are shown in the dropdown.
   availableModelProviders: Array<string>;
@@ -119,7 +122,8 @@ export type ChatState = {
   activeContextTokens: () => number;
   activeModelName: () => string | null;
   activeContextWindow: () => number;
-  setConversationModel: (modelName: string | null) => void;
+  setConversationModel: (modelName: string | null, provider?: string | null) => void;
+  activeModelProvider: () => string | null;
 
   // ── helpers ───────────────────────────────────────────────────────────
   agentDisplay: (name: string | null | undefined) => string | null;
@@ -169,6 +173,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   conversations: [],
   agents: [],
   modelsMap: {},
+  fallbackModels: [],
   availableModelProviders: [],
   activeConversationId: null,
   connectionStatus: "connected",
@@ -225,15 +230,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   // Model dropdown list: the curated realistic catalog (models Hermes supports
-  // on the in-use providers) PLUS each profile's configured default. Deduped by
-  // model id so per-profile entries that match the catalog collapse into one.
+  // on the in-use providers) PLUS each profile's configured default PLUS every
+  // profile's fallback_providers entries. Deduped by model+provider so the
+  // same id on different providers shows as distinct runnable options.
   configuredModels: () => {
-    const { availableModelProviders, modelsMap } = get();
+    const { availableModelProviders, fallbackModels, modelsMap } = get();
+    // Dedupe by model+provider: the same id can exist on several providers
+    // (deepseek-v4-flash on deepseek vs opencode-go) and each is a distinct
+    // runnable option with its own override pair.
     const out: Record<string, ModelInfo> = {};
     const add = (model: string | undefined, provider: string | undefined, ctx: number | null | undefined) => {
       if (!model) return;
-      const cur = out[model];
-      out[model] = {
+      const k = `${provider || ""}|||${model}`;
+      const cur = out[k];
+      out[k] = {
         model,
         provider: cur?.provider || provider || "",
         contextLength: cur?.contextLength || ctx || null,
@@ -249,7 +259,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     for (const info of Object.values(modelsMap)) {
       if (info?.model) add(info.model, info.provider, info.contextLength);
     }
-    return Object.values(out).sort((a, b) => a.model.localeCompare(b.model));
+    // Fallback models are explicitly configured in Hermes, so they are
+    // offered as-is (ungated) — this is also how opencode/openrouter free
+    // tier models reach the dropdown.
+    for (const info of fallbackModels) {
+      if (info?.model) add(info.model, info.provider, info.contextLength ?? null);
+    }
+    return Object.values(out).sort((a, b) => a.model.localeCompare(b.model) || a.provider.localeCompare(b.provider));
   },
   contextWindowFor: (model) => {
     if (!model) return DEFAULT_CONTEXT_WINDOW;
@@ -294,17 +310,27 @@ export const useChatStore = create<ChatState>((set, get) => ({
     return agentModel(agent);
   },
   activeContextWindow: () => get().contextWindowFor(get().activeModelName() || ""),
+  // Provider paired with the active conversation's model override (null when
+  // the conversation uses the profile default — providerFor resolves those).
+  activeModelProvider: () => {
+    const { conversations, activeConversationId } = get();
+    if (!activeConversationId) return null;
+    const conv = conversations.find((c) => c.id === activeConversationId);
+    return conv?.model ? conv.modelProvider || null : null;
+  },
 
-  // Set (or clear, null) a per-conversation model override.
-  setConversationModel: (modelName) => {
+  // Set (or clear, null) a per-conversation model override, paired with its
+  // provider (the same model id can exist on several providers).
+  setConversationModel: (modelName, provider) => {
     const { activeConversationId, conversations } = get();
     if (!activeConversationId) return;
     const m = (modelName || "").trim() || null;
+    const p = m ? (provider || "").trim() || null : null;
     const conv = conversations.find((c) => c.id === activeConversationId);
     if (conv) {
-      set({ conversations: conversations.map((c) => (c.id === conv.id ? { ...c, model: m } : c)) });
+      set({ conversations: conversations.map((c) => (c.id === conv.id ? { ...c, model: m, modelProvider: p } : c)) });
     }
-    db.conversations.update(activeConversationId, { model: m });
+    db.conversations.update(activeConversationId, { model: m, modelProvider: p });
   },
 
   // Members of the active group conversation (for mention chips/hints).
@@ -912,7 +938,9 @@ async function streamTo(
   // otherwise the agent's configured model. Override sends provider too so
   // the gateway honors a bare model value.
   const overrideModel = conv?.model || null;
-  const overrideProvider = overrideModel ? get().providerFor(overrideModel) : "";
+  // Prefer the provider stored with the override (same id can exist on
+  // several providers); fall back to catalog lookup for legacy rows.
+  const overrideProvider = conv?.modelProvider || (overrideModel ? get().providerFor(overrideModel) : "");
   assistantMsg.modelName = overrideModel || get().agentModel(agentName) || null;
   patchMessage(set, get, assistantId, { modelName: assistantMsg.modelName });
 
@@ -1108,6 +1136,15 @@ async function applyServerConfig(
         }
       }
       if (Object.keys(map).length) set({ modelsMap: map });
+    }
+    // Fallback models from every profile's `fallback_providers` — real
+    // configured models, offered in the dropdown ungated.
+    if (Array.isArray(cfg.fallbacks)) {
+      const fb: Array<ModelInfo> = [];
+      for (const info of cfg.fallbacks as Array<{ model?: string; provider?: string }>) {
+        if (info?.model) fb.push({ model: info.model, provider: info.provider || "", contextLength: null });
+      }
+      set({ fallbackModels: fb });
     }
     // Which model-providers have credentials on this host (from .env).
     if (Array.isArray(cfg.modelProviders)) {

@@ -120,12 +120,52 @@ export function modelProvidersAvailable(home = hermesHomeRoot()) {
   return present
 }
 
+// Read the `fallback_providers:` list from a profile's config.yaml — every
+// { provider, model } Hermes itself will run for that profile. These are real
+// configured models (e.g. openrouter/free), so the app offers them in the
+// model dropdown alongside the primary default, ungated by credential checks.
+export function readProfileFallbacks(profileDir) {
+  const cfgPath = join(profileDir, 'config.yaml')
+  if (!existsSync(cfgPath)) return []
+  try {
+    const lines = readFileSync(cfgPath, 'utf8').split('\n')
+    let inList = false
+    let cur = null
+    const out = []
+    const flush = () => {
+      if (cur?.model) out.push({ model: cur.model, provider: cur.provider || '' })
+      cur = null
+    }
+    for (const raw of lines) {
+      if (!inList) {
+        if (/^fallback_providers:\s*$/.test(raw)) inList = true
+        continue
+      }
+      // A new top-level key ends the list (list items are indented).
+      if (/^\S/.test(raw)) break
+      const item = raw.match(/^\s*-\s*(\S+):\s*(.*)$/)
+      if (item) {
+        flush()
+        cur = {}
+        if (item[1] !== '') cur[item[1]] = item[2].trim().replace(/^['"]|['"]$/g, '')
+        continue
+      }
+      const kv = raw.match(/^\s+(\S+):\s*(.*)$/)
+      if (kv && cur) cur[kv[1]] = kv[2].trim().replace(/^['"]|['"]$/g, '')
+    }
+    flush()
+    return out
+  } catch { return [] }
+}
+
 // Build the full config payload: base key + per-profile keys/models +
 // available model providers. Reads the real host Hermes config.
 export function buildTalariaConfig({ home = hermesHomeRoot(), env = process.env } = {}) {
   let base = readApiServerKey(join(home, '.env'))
   const agents = {}
   const models = {}
+  const fallbackSeen = new Set()
+  const fallbacks = []
   try {
     const profilesDir = join(home, 'profiles')
     if (existsSync(profilesDir)) {
@@ -135,6 +175,13 @@ export function buildTalariaConfig({ home = hermesHomeRoot(), env = process.env 
         if (key) agents[name] = key
         const m = readProfileModel(dir)
         if (m.model) models[name] = { model: m.model, provider: m.provider || '', contextLength: m.contextLength || null }
+        for (const f of readProfileFallbacks(dir)) {
+          const k = `${f.provider}|||${f.model}`
+          if (!fallbackSeen.has(k)) {
+            fallbackSeen.add(k)
+            fallbacks.push(f)
+          }
+        }
       }
     }
   } catch { /* ignore */ }
@@ -149,7 +196,7 @@ export function buildTalariaConfig({ home = hermesHomeRoot(), env = process.env 
       }
     } catch { /* ignore */ }
   }
-  return { base, agents, models, modelProviders: modelProvidersAvailable(home) }
+  return { base, agents, models, fallbacks, modelProviders: modelProvidersAvailable(home) }
 }
 
 // Serve the config as a JSON HTTP response (used by serve.mjs and the Vite
