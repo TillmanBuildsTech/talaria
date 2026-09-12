@@ -57,6 +57,13 @@ export function App() {
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [showModelMenu, setShowModelMenu] = useState(false);
+  const [modelFilter, setModelFilter] = useState("");
+
+  function toggleModelMenu() {
+    // Clear the previous search each time the menu opens.
+    if (!showModelMenu) setModelFilter("");
+    setShowModelMenu((v) => !v);
+  }
 
   const chatContainer = useRef<HTMLDivElement>(null);
   const scrollAnchor = useRef<HTMLDivElement>(null);
@@ -68,6 +75,7 @@ export function App() {
   const activeContextTokens = store.activeContextTokens();
   const activeContextWindow = store.activeContextWindow();
   const activeModelName = store.activeModelName();
+  const activeModelProvider = store.activeModelProvider();
   const configuredModels = store.configuredModels();
   const activeConvTitle = store.activeConvTitle();
 
@@ -83,10 +91,20 @@ export function App() {
   const modelDotClass = { red: "bg-red-400", amber: "bg-amber-400", green: "bg-emerald-400" }[level];
   const contextWidth = `${Math.min(100, (activeContextTokens / (activeContextWindow || 1)) * 100)}%`;
 
-  function selectModel(modelName: string | null) {
-    store.setConversationModel(modelName);
+  function selectModel(modelName: string | null, provider?: string | null) {
+    store.setConversationModel(modelName, provider);
     setShowModelMenu(false);
   }
+
+  // Model-menu search: substring match over model id + provider. "Profile
+  // default" stays pinned when the query is empty or matches it.
+  const modelQuery = modelFilter.trim().toLowerCase();
+  const showProfileDefault = !modelQuery || "profile default".includes(modelQuery);
+  const filteredModels = modelQuery
+    ? configuredModels.filter((m) =>
+        `${m.model} ${m.provider || ""}`.toLowerCase().includes(modelQuery),
+      )
+    : configuredModels;
 
   function startTitleEdit() {
     if (!activeConversationId) return;
@@ -161,7 +179,11 @@ export function App() {
       <ConnectionBanner />
 
       {/* Top bar */}
-      <header className="flex items-center gap-2 px-4 py-3 border-b border-slate-800 shrink-0">
+      {/* Top bar — pt accounts for the iPhone status bar in standalone PWA
+          (viewport-fit=cover + black-translucent puts the webview under it;
+          env() is 0 in a browser tab, so this is a no-op there). Without it
+          the top buttons sit under the status bar and can't be tapped. */}
+      <header className="flex items-center gap-2 px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] border-b border-slate-800 shrink-0">
         {/* Project scope picker */}
         <ProjectPicker />
         <button
@@ -224,7 +246,7 @@ export function App() {
           <div className="relative shrink-0">
             <button
               type="button"
-              onClick={() => setShowModelMenu((v) => !v)}
+              onClick={toggleModelMenu}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-700 hover:bg-slate-800 text-xs transition-colors"
               title={`Model for this conversation (${fmtTokens(activeContextWindow)} context)`}
             >
@@ -243,28 +265,54 @@ export function App() {
                   aria-label="Close model menu"
                   onClick={() => setShowModelMenu(false)}
                 />
-                <div className="absolute right-0 mt-2 w-80 z-40 bg-slate-800 rounded-xl border border-slate-700 shadow-xl overflow-hidden">
+                <div className="absolute right-0 top-full mt-2 w-80 max-w-[85vw] max-h-[70dvh] overflow-y-auto z-40 bg-slate-800 rounded-xl border border-slate-700 shadow-xl">
                   <div className="px-3 py-2 text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-700/60">
                     Model for this conversation
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => selectModel(null)}
-                    className="w-full text-left px-3 py-2 text-xs hover:bg-slate-700/60 transition-colors flex items-center justify-between gap-2"
-                  >
-                    <span className="text-slate-300">Profile default</span>
-                    {!activeModelName && <span className="text-emerald-400">✓</span>}
-                  </button>
-                  {configuredModels.map((m) => (
+                  {/* Search filter (model id + provider). Enter picks the
+                      first visible option, Escape closes. */}
+                  <div className="px-3 py-2 border-b border-slate-700/60 sticky top-0 bg-slate-800">
+                    <input
+                      autoFocus
+                      value={modelFilter}
+                      onChange={(e) => setModelFilter(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") {
+                          e.preventDefault();
+                          setShowModelMenu(false);
+                        } else if (e.key === "Enter") {
+                          e.preventDefault();
+                          if (showProfileDefault) selectModel(null);
+                          else if (filteredModels[0]) selectModel(filteredModels[0].model, filteredModels[0].provider);
+                        }
+                      }}
+                      placeholder="Search models…"
+                      aria-label="Search models"
+                      className="w-full bg-slate-900 text-xs rounded-lg px-2.5 py-1.5 outline-none ring-1 ring-slate-700 focus:ring-blue-500 text-slate-100 placeholder-slate-500"
+                    />
+                  </div>
+                  {showProfileDefault && (
                     <button
                       type="button"
-                      key={m.model}
-                      onClick={() => selectModel(m.model)}
+                      onClick={() => selectModel(null)}
+                      className="w-full text-left px-3 py-2 text-xs hover:bg-slate-700/60 transition-colors flex items-center justify-between gap-2"
+                    >
+                      <span className="text-slate-300">Profile default</span>
+                      {!activeModelName && <span className="text-emerald-400">✓</span>}
+                    </button>
+                  )}
+                  {filteredModels.map((m) => (
+                    <button
+                      type="button"
+                      key={`${m.provider}|||${m.model}`}
+                      onClick={() => selectModel(m.model, m.provider)}
                       className="w-full text-left px-3 py-2 text-xs hover:bg-slate-700/60 transition-colors cursor-pointer flex flex-col gap-0.5"
                     >
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-slate-200 font-mono truncate">{m.model}</span>
-                        {activeModelName === m.model && <span className="text-emerald-400 shrink-0">✓</span>}
+                        {activeModelName === m.model && (activeModelProvider || "") === (m.provider || "") && (
+                          <span className="text-emerald-400 shrink-0">✓</span>
+                        )}
                       </div>
                       <div className="flex items-center gap-2 text-[10px] text-slate-500">
                         {m.provider && <span className="truncate">{m.provider}</span>}
@@ -273,6 +321,9 @@ export function App() {
                     </button>
                   ))}
                   {configuredModels.length === 0 && <div className="px-3 py-2 text-xs text-slate-500">No models detected.</div>}
+                  {configuredModels.length > 0 && !showProfileDefault && filteredModels.length === 0 && (
+                    <div className="px-3 py-2 text-xs text-slate-500">No models match “{modelFilter.trim()}”.</div>
+                  )}
                 </div>
               </>
             )}

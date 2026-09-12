@@ -58,6 +58,10 @@ export type Conversation = {
   agentIds: Array<string>;
   messageCount?: number;
   model?: string | null;
+  // Provider paired with the `model` override (same model id can exist on
+  // several providers, e.g. deepseek-v4-flash on deepseek vs opencode-go).
+  // Non-indexed like `model`, so no Dexie migration is needed.
+  modelProvider?: string | null;
   sessions?: Record<string, string>;
   // Project scope (P9): the workspace this conversation belongs to. null (or
   // absent) means the global/unassigned scope. Scoped conversations are

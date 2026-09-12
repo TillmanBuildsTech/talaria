@@ -83,7 +83,7 @@ export function ChatInput({ onSend, onStop }: ChatInputProps) {
   }, []);
 
   return (
-    <div className="px-3 py-3 border-t border-slate-800 shrink-0 bg-slate-900">
+    <div className="px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] border-t border-slate-800 shrink-0 bg-slate-900">
       {/* Group mention helper */}
       {activeGroupMembers.length > 1 && (
         <div className="flex items-center gap-1.5 mb-2 overflow-x-auto pb-0.5">

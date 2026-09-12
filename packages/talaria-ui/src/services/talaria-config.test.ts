@@ -6,6 +6,7 @@ import {
   buildTalariaConfig,
   hermesHomeRoot,
   readApiServerKey,
+  readProfileFallbacks,
   readProfileModel,
 } from "../../../../apps/pwa/talaria-config.mjs";
 
@@ -79,6 +80,45 @@ describe("talaria-config shared module", () => {
     });
     expect(cfg.base).toBe("base-key-123"); // real base wins over env when present
     expect(cfg.agents).toEqual({ dev: "dev-from-env" });
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("readProfileFallbacks parses the fallback_providers list", () => {
+    const dir = mkdtempSync(join(tmpdir(), "talaria-fb-"));
+    mkdirSync(join(dir, "profiles", "dev"), { recursive: true });
+    writeFileSync(
+      join(dir, "profiles", "dev", "config.yaml"),
+      "model:\n  default: deepseek-chat\n  provider: deepseek\nfallback_providers:\n  - provider: openrouter\n    model: openrouter/free\n  - provider: openrouter\n    model: deepseek/deepseek-chat-v3.1\ntoolsets:\n  - hermes-cli\n"
+    );
+    expect(readProfileFallbacks(join(dir, "profiles", "dev"))).toEqual([
+      { model: "openrouter/free", provider: "openrouter" },
+      { model: "deepseek/deepseek-chat-v3.1", provider: "openrouter" },
+    ]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("readProfileFallbacks returns [] when the list is absent", () => {
+    const dir = mkdtempSync(join(tmpdir(), "talaria-fb2-"));
+    mkdirSync(join(dir, "profiles", "dev"), { recursive: true });
+    writeFileSync(join(dir, "profiles", "dev", "config.yaml"), "model:\n  default: x\n  provider: y\n");
+    expect(readProfileFallbacks(join(dir, "profiles", "dev"))).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("buildTalariaConfig dedupes fallbacks across profiles", () => {
+    const dir = mkdtempSync(join(tmpdir(), "talaria-fb3-"));
+    writeFileSync(join(dir, ".env"), "API_SERVER_KEY=base-key-123\n");
+    for (const name of ["a", "b"]) {
+      const pd = join(dir, "profiles", name);
+      mkdirSync(pd, { recursive: true });
+      writeFileSync(join(pd, ".env"), "API_SERVER_KEY=k\n");
+      writeFileSync(
+        join(pd, "config.yaml"),
+        "model:\n  default: m\n  provider: p\nfallback_providers:\n  - provider: openrouter\n    model: openrouter/free\n"
+      );
+    }
+    const cfg = buildTalariaConfig({ home: dir, env: {} });
+    expect(cfg.fallbacks).toEqual([{ model: "openrouter/free", provider: "openrouter" }]);
     rmSync(dir, { recursive: true, force: true });
   });
 });

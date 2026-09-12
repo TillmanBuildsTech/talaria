@@ -86,7 +86,7 @@ export function Sidebar({ onClose, style }: SidebarProps) {
       {/* Sidebar panel */}
       <div className="relative w-80 max-w-[85vw] h-full bg-slate-950 border-r border-slate-800 flex flex-col shadow-xl">
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 shrink-0">
+        <div className="flex items-center justify-between px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] border-b border-slate-800 shrink-0">
           <h2 className="text-sm font-semibold flex items-center gap-2">
             {picking ? (picking === "group" ? "New group chat" : "Direct message") : "Chat"}
           </h2>
@@ -270,7 +270,7 @@ export function Sidebar({ onClose, style }: SidebarProps) {
         )}
 
         {/* Footer */}
-        <div className="px-4 py-3 border-t border-slate-800 text-xs text-slate-600">
+        <div className="px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] border-t border-slate-800 text-xs text-slate-600">
           Talaria — tap an agent to message it directly
         </div>
       </div>

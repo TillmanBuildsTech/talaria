@@ -8,6 +8,7 @@ export function readProfileModel(profileDir: string): {
   provider?: string;
   contextLength?: number | null;
 };
+export function readProfileFallbacks(profileDir: string): Array<{ model: string; provider: string }>;
 export function buildTalariaConfig(opts?: {
   home?: string;
   env?: Record<string, string | undefined>;
@@ -15,6 +16,7 @@ export function buildTalariaConfig(opts?: {
   base: string;
   agents: Record<string, string>;
   models: Record<string, { model: string; provider: string; contextLength: number | null }>;
+  fallbacks: Array<{ model: string; provider: string }>;
   modelProviders: string[];
 };
 export function modelProvidersAvailable(home?: string): string[];
