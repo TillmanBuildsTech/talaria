@@ -51,6 +51,28 @@ pnpm --filter @talaria/pwa build      # Production build → dist/
 pnpm --filter @talaria/pwa preview    # Serve the production build locally
 ```
 
+> The PWA imports the **built** `@talaria/ui` (`dist/index.js`), and the Vite dev
+> server does not rebuild workspace dependencies. Always run
+> `pnpm --filter @talaria/ui build` after changing `packages/talaria-ui` (or run
+> `pnpm --filter @talaria/ui dev` for a watch build) — otherwise the dev server
+> serves a stale UI.
+
+## Tests
+
+```bash
+pnpm -r test                          # unit tests (vitest, @talaria/ui)
+pnpm --filter @talaria/pwa test:e2e   # Playwright smoke suite (chromium)
+```
+
+The Playwright suite (`e2e/`) boots the app twice — Vite dev server and the
+production `preview` build — and walks every NavRail module (chat, command
+center, observability, wip, deployments, docs, editor, settings), asserting each
+module's own content renders, nav swaps cleanly with no cross-module leakage,
+the editor degrades gracefully on web, and the PWA installability surface
+(manifest, icons, service worker) is intact. Results and the defects it found
+live in [`e2e/DEFECT_REPORT.md`](e2e/DEFECT_REPORT.md); the first run needs
+`npx playwright install chromium`.
+
 ## Deploy
 
 The build is static — host `dist/` anywhere that serves static files (GitHub
