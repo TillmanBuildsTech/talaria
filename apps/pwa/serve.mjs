@@ -19,7 +19,7 @@ import { extname, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { serveTalariaConfig } from './talaria-config.mjs'
+import { serveTalariaConfig, readApiServerKey } from './talaria-config.mjs'
 import {
   isProjectsDocsPath,
   handleProjectsDocs,
