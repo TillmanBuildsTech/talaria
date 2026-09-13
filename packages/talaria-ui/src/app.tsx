@@ -58,6 +58,7 @@ export function App() {
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [showModelMenu, setShowModelMenu] = useState(false);
+  const [customModel, setCustomModel] = useState("");
   const [showDebug, setShowDebug] = useState(false);
 
   const chatContainer = useRef<HTMLDivElement>(null);
@@ -286,6 +287,32 @@ export function App() {
                     </button>
                   ))}
                   {configuredModels.length === 0 && <div className="px-3 py-2 text-xs text-slate-500">No models detected.</div>}
+                  <form
+                    className="flex items-center gap-2 px-3 py-2 border-t border-slate-700/60"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (customModel.trim()) {
+                        void store.addCustomModel(customModel);
+                        setCustomModel("");
+                        setShowModelMenu(false);
+                      }
+                    }}
+                  >
+                    <input
+                      value={customModel}
+                      onChange={(e) => setCustomModel(e.target.value)}
+                      placeholder="Custom model (vendor/model)…"
+                      aria-label="Custom model id"
+                      className="flex-1 min-w-0 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-xs font-mono text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-slate-500"
+                    />
+                    <button
+                      type="submit"
+                      disabled={!customModel.trim()}
+                      className="shrink-0 px-2 py-1.5 text-xs rounded-lg bg-slate-700 hover:bg-slate-600 disabled:opacity-40 transition-colors"
+                    >
+                      Use
+                    </button>
+                  </form>
                 </div>
               </>
             )}

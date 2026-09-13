@@ -17,6 +17,13 @@ describe("model catalog (KNOWN_MODELS)", () => {
     const slugs = KNOWN_MODELS.map((m) => m.model);
     expect(new Set(slugs).size).toBe(slugs.length);
   });
+
+  it("includes the Meta Muse Spark family (regression: missing from dropdown)", () => {
+    const slugs = KNOWN_MODELS.map((m) => m.model);
+    expect(slugs).toContain("meta/muse-spark-1.3");
+    expect(slugs).toContain("meta/muse-spark-1.3-contributor");
+    expect(knownWindowFor("meta/muse-spark-1.3-contributor")).toBe(1_048_576);
+  });
 });
 
 describe("knownWindowFor", () => {

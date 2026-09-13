@@ -103,6 +103,10 @@ export type ChatState = {
   // agentName -> { model, provider, contextLength } (from /talaria-config;
   // the models Hermes is actually configured to run per profile).
   modelsMap: Record<string, ModelInfo>;
+  // User-added models (via the dropdown's custom-model entry). Merged into
+  // the dropdown ungated and persisted to settings — the escape hatch for
+  // any model the curated catalog doesn't list yet.
+  customModels: Record<string, ModelInfo>;
   // Model providers the host has credentials for (from /talaria-config, read
   // from the host's .env files). Only their models are shown in the dropdown.
   availableModelProviders: Array<string>;
@@ -134,6 +138,8 @@ export type ChatState = {
   activeModelName: () => string | null;
   activeContextWindow: () => number;
   setConversationModel: (modelName: string | null) => void;
+  /** Add a user-specified model to the dropdown (persisted to settings). */
+  addCustomModel: (model: string, provider?: string) => Promise<void>;
 
   // ── helpers ───────────────────────────────────────────────────────────
   agentDisplay: (name: string | null | undefined) => string | null;
@@ -185,6 +191,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   conversations: [],
   agents: [],
   modelsMap: {},
+  customModels: {},
   availableModelProviders: [],
   activeConversationId: null,
   connectionStatus: "connecting",
@@ -246,7 +253,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   // on the in-use providers) PLUS each profile's configured default. Deduped by
   // model id so per-profile entries that match the catalog collapse into one.
   configuredModels: () => {
-    const { availableModelProviders, modelsMap } = get();
+    const { availableModelProviders, modelsMap, customModels } = get();
     const out: Record<string, ModelInfo> = {};
     const add = (model: string | undefined, provider: string | undefined, ctx: number | null | undefined) => {
       if (!model) return;
@@ -265,6 +272,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       add(km.model, km.provider, km.contextLength);
     }
     for (const info of Object.values(modelsMap)) {
+      if (info?.model) add(info.model, info.provider, info.contextLength);
+    }
+    // User-added models are always shown (explicit choice beats the gate).
+    for (const info of Object.values(customModels)) {
       if (info?.model) add(info.model, info.provider, info.contextLength);
     }
     return Object.values(out).sort((a, b) => a.model.localeCompare(b.model));
@@ -323,6 +334,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({ conversations: conversations.map((c) => (c.id === conv.id ? { ...c, model: m } : c)) });
     }
     db.conversations.update(activeConversationId, { model: m });
+  },
+
+  // Add a user-specified model to the dropdown and select it for the active
+  // conversation. Provider defaults to openrouter (the host-wide credential);
+  // pass an explicit provider for native (non-OpenRouter) models.
+  addCustomModel: async (model, provider) => {
+    const m = (model || "").trim();
+    if (!m) return;
+    const p = (provider || "").trim() || "openrouter";
+    const entry: ModelInfo = { model: m, provider: p, contextLength: knownWindowFor(m) };
+    const next = { ...get().customModels, [m]: entry };
+    set({ customModels: next });
+    await db.settings.put({ key: "customModels", value: JSON.stringify(next) });
+    get().setConversationModel(m);
   },
 
   // Members of the active group conversation (for mention chips/hints).
@@ -521,6 +546,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
       hermesClient.setApiKey(savedKey.value);
     } else if (get().apiKey) {
       hermesClient.setApiKey(get().apiKey);
+    }
+
+    // Restore user-added custom models (persisted by addCustomModel).
+    try {
+      const savedModels = await db.settings.get("customModels");
+      if (savedModels?.value) {
+        const parsed = JSON.parse(savedModels.value) as Record<string, ModelInfo>;
+        if (parsed && typeof parsed === "object") set({ customModels: parsed });
+      }
+    } catch {
+      // Corrupt entry — start clean rather than break init.
     }
 
     await get().loadAgents();
