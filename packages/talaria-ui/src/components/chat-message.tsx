@@ -6,6 +6,10 @@ import { useChatStore } from "../stores/chat";
 
 marked.setOptions({ gfm: true, breaks: true });
 
+// After this long with no visible output we say so explicitly instead of
+// showing an unexplained spinner ("I don't know what's going on").
+const WAITING_HINT_MS = 8000;
+
 function fmt(ms: number | null | undefined): string | null {
   if (ms == null) return null;
   if (ms < 1000) return `${ms}ms`;
@@ -13,6 +17,19 @@ function fmt(ms: number | null | undefined): string | null {
   if (s < 60) return `${s.toFixed(1)}s`;
   return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
 }
+
+// Human wording for a transport failure kind (matches StreamFailureKind).
+const FAILURE_LABEL: Record<string, string> = {
+  auth: "API key rejected",
+  http: "Request rejected",
+  network: "Network error",
+  server: "Gateway error",
+  stall: "Reply stalled",
+  timeout: "Gateway timed out",
+  truncated: "Reply cut short",
+  "agent-error": "Agent failed",
+  aborted: "Stopped",
+};
 
 type ChatMessageProps = {
   message: ChatMessageType;
@@ -49,6 +66,8 @@ export function ChatMessage({ message, onRetry }: ChatMessageProps) {
 
   const elapsedText = message.elapsedMs != null ? fmt(message.elapsedMs) : message.status === "streaming" && message.startedAt ? fmt(now - message.startedAt) : null;
   const tokensText = message.tokens != null ? `${message.tokens.toLocaleString()} tok` : null;
+  const waitingMs = message.status === "streaming" && message.startedAt ? now - message.startedAt : 0;
+  const showWaitingHint = isThinking && !message.toolStatus && waitingMs > WAITING_HINT_MS;
 
   // Badge above a message:
   //  - user message that @'d specific agents → "@Developer" chips
@@ -79,6 +98,9 @@ export function ChatMessage({ message, onRetry }: ChatMessageProps) {
           ? "bg-slate-900 text-slate-400 italic border border-slate-800 rounded-bl-md text-xs"
           : "bg-slate-800 text-slate-100 rounded-bl-md";
 
+  const failureLabel = message.errorKind ? FAILURE_LABEL[message.errorKind] || message.errorKind : "Failed";
+  const attemptText = typeof message.attempts === "number" && message.attempts > 1 ? `${message.attempts} attempts` : null;
+
   return (
     <div className={`flex flex-col ${message.role === "user" ? "items-end" : "items-start"}`}>
       {/* Target/author badge: for user @mentions and for assistant replies */}
@@ -96,10 +118,16 @@ export function ChatMessage({ message, onRetry }: ChatMessageProps) {
       <div className={`max-w-[85%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed break-words ${bubbleClass}`}>
         {/* Content */}
         {isThinking ? (
-          <div className="thinking-dots" aria-label="Thinking">
-            <span />
-            <span />
-            <span />
+          <div className="flex items-center gap-2">
+            <div className="thinking-dots" aria-label="Thinking">
+              <span />
+              <span />
+              <span />
+            </div>
+            {message.toolStatus && <span className="text-[11px] text-slate-400 truncate max-w-[280px]">{message.toolStatus}</span>}
+            {showWaitingHint && (
+              <span className="text-[11px] text-slate-500">waiting for the gateway ({fmt(waitingMs)})…</span>
+            )}
           </div>
         ) : (
           // biome-ignore lint/security/noDangerouslySetInnerHtml: sanitized via DOMPurify before render
@@ -109,6 +137,11 @@ export function ChatMessage({ message, onRetry }: ChatMessageProps) {
         {/* Streaming cursor (only once tokens are actually flowing) */}
         {message.status === "streaming" && !isThinking && (
           <span className="inline-block w-2 h-4 ml-0.5 bg-blue-400 animate-pulse align-text-bottom rounded-sm" />
+        )}
+
+        {/* Tool activity while streaming (a long turn must not look frozen) */}
+        {message.status === "streaming" && !isThinking && message.toolStatus && (
+          <div className="mt-1.5 pt-1.5 border-t border-slate-700/40 text-[10px] text-slate-400 truncate">{message.toolStatus}</div>
         )}
 
         {/* Elapsed + token count (assistant replies) */}
@@ -125,19 +158,36 @@ export function ChatMessage({ message, onRetry }: ChatMessageProps) {
           </div>
         )}
 
-        {/* Failed state */}
+        {/* Failed state — say WHAT failed, not just "tap to retry" */}
         {!message.system && message.status === "failed" && (
-          <div className="flex items-center gap-2 mt-1.5 pt-1.5 border-t border-red-500/30">
-            <svg className="w-3.5 h-3.5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"
-              />
-            </svg>
-            <button type="button" onClick={onRetry} className="text-xs text-red-400 hover:text-red-300 underline transition-colors">
-              Tap to retry
+          <div className="mt-2 pt-2 border-t border-red-500/30">
+            <div className="flex items-start gap-2">
+              <svg className="w-3.5 h-3.5 mt-0.5 shrink-0 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"
+                />
+              </svg>
+              <div className="min-w-0">
+                <p className="text-xs text-red-200 break-words">{message.errorText || "The reply failed."}</p>
+                <p className="text-[10px] text-red-400/80 font-mono mt-0.5 break-words">
+                  {failureLabel}
+                  {attemptText ? ` · ${attemptText}` : ""}
+                  {message.retriable === false ? " · retrying will not help" : ""}
+                </p>
+              </div>
+            </div>
+            {message.errorKind === "auth" && (
+              <p className="text-[10px] text-amber-300/90 mt-1">Check this agent's API key in Settings → Agents.</p>
+            )}
+            <button
+              type="button"
+              onClick={onRetry}
+              className="mt-1.5 text-xs text-red-300 hover:text-red-200 underline underline-offset-2 transition-colors"
+            >
+              Retry
             </button>
           </div>
         )}

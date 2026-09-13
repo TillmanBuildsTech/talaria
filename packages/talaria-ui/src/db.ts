@@ -45,6 +45,17 @@ export type ChatMessage = {
   tokens?: number | null;
   contextTokens?: number | null;
   modelName?: string | null;
+  // ── failure / progress detail (diagnostics) ───────────────────────────────
+  // Why a row failed, straight from the transport (StreamFailureKind) plus the
+  // gateway's own message. Optional and non-indexed, so no Dexie version bump.
+  errorKind?: string | null;
+  errorText?: string | null;
+  // Whether re-sending this turn could plausibly work (false for auth/4xx).
+  retriable?: boolean | null;
+  // How many transport attempts have been made for this reply.
+  attempts?: number | null;
+  // Live agent tool line (`hermes.tool.progress`) while the turn streams.
+  toolStatus?: string | null;
 };
 
 export type ConversationKind = "default" | "dm" | "group";

@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { ChatInput } from "./components/chat-input";
 import { ChatMessage } from "./components/chat-message";
 import { CodeEditor } from "./components/code-editor";
-import { ConnectionBanner } from "./components/connection-banner";
+import { ConnectionBanner, ConnectionDot } from "./components/connection-banner";
+import { DebugPanel } from "./components/debug-panel";
 import { Deployments } from "./components/deployments";
 import { NavRail, type NavModuleId } from "./components/nav-rail";
 import { DocsEditor } from "./components/docs-editor";
@@ -57,6 +58,7 @@ export function App() {
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [showModelMenu, setShowModelMenu] = useState(false);
+  const [showDebug, setShowDebug] = useState(false);
 
   const chatContainer = useRef<HTMLDivElement>(null);
   const scrollAnchor = useRef<HTMLDivElement>(null);
@@ -220,6 +222,17 @@ export function App() {
         </div>
 
         {/* Model picker + context (only once a conversation is open) */}
+        <ConnectionDot />
+        <button
+          type="button"
+          onClick={() => setShowDebug((v) => !v)}
+          className={`px-2 py-1.5 rounded-lg border text-[11px] font-mono transition-colors shrink-0 ${showDebug ? "border-sky-500 text-sky-300 bg-sky-500/10" : "border-slate-700 text-slate-400 hover:bg-slate-800"}`}
+          title="Toggle the chat diagnostics console (why did that fail?)"
+          aria-label="Toggle diagnostics panel"
+          aria-pressed={showDebug}
+        >
+          {"{…}"}
+        </button>
         {activeConversationId && (
           <div className="relative shrink-0">
             <button
@@ -351,6 +364,7 @@ export function App() {
 
             {/* Input */}
             <ChatInput onSend={handleSend} onStop={() => store.stopStreaming()} />
+            {showDebug && <DebugPanel onClose={() => setShowDebug(false)} />}
           </div>
         ) : (
           /* Coming-soon modules (docs, editor) render a placeholder */

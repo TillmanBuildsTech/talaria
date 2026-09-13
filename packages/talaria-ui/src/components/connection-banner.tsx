@@ -1,25 +1,55 @@
 import { useChatStore } from "../stores/chat";
 
+// Always-visible gateway status dot for the header. Green = the gateway answered
+// the last health probe, amber = unreachable, blue = still connecting. Clicking
+// it forces an immediate probe (and a failed turn auto-retries once it is back).
+export function ConnectionDot() {
+  const connectionStatus = useChatStore((s) => s.connectionStatus);
+  const connectionDetail = useChatStore((s) => s.connectionDetail);
+  const checkConnection = useChatStore((s) => s.checkConnection);
+
+  const color =
+    connectionStatus === "connected" ? "bg-emerald-400" : connectionStatus === "connecting" || connectionStatus === "reconnecting" ? "bg-blue-400 animate-pulse" : "bg-amber-400";
+  const label =
+    connectionStatus === "connected" ? "Gateway connected" : connectionStatus === "connecting" ? "Connecting to the gateway…" : connectionStatus === "reconnecting" ? "Reconnecting to the gateway…" : "Gateway unreachable";
+
+  return (
+    <button
+      type="button"
+      onClick={() => void checkConnection()}
+      title={`${label}${connectionDetail ? ` — ${connectionDetail}` : ""} (click to re-check)`}
+      aria-label={label}
+      className="p-1.5 rounded-lg hover:bg-slate-800 transition-colors shrink-0"
+    >
+      <span className={`block w-2 h-2 rounded-full ${color}`} />
+    </button>
+  );
+}
+
+// Banner strip for the states the user must notice. It carries the REASON
+// ("gateway returned HTTP 502", "API key rejected") and a one-tap re-check,
+// instead of a bare "Offline — waiting for connection…".
 export function ConnectionBanner() {
   const connectionStatus = useChatStore((s) => s.connectionStatus);
+  const connectionDetail = useChatStore((s) => s.connectionDetail);
+  const checkConnection = useChatStore((s) => s.checkConnection);
 
-  const banner =
+  if (connectionStatus === "connected") return null;
+
+  const copy =
     connectionStatus === "offline"
-      ? "Offline — waiting for connection…"
-      : connectionStatus === "reconnecting"
-        ? "Reconnecting…"
-        : null;
+      ? "Offline — the gateway is not answering"
+      : connectionStatus === "connecting"
+        ? "Connecting to the gateway…"
+        : "Reconnecting to the gateway…";
 
-  if (!banner) return null;
-
-  const bannerClass =
-    connectionStatus === "offline" ? "bg-amber-600/90 text-amber-50" : "bg-blue-600/90 text-blue-50";
+  const bannerClass = connectionStatus === "offline" ? "bg-amber-600/90 text-amber-50" : "bg-blue-600/90 text-blue-50";
 
   return (
     <div className="shrink-0">
       <div className={`flex items-center justify-center gap-2 px-4 py-1.5 text-xs font-medium text-center transition-colors ${bannerClass}`}>
         {connectionStatus === "offline" ? (
-          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -28,7 +58,7 @@ export function ConnectionBanner() {
             />
           </svg>
         ) : (
-          <svg className="w-3.5 h-3.5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <svg className="w-3.5 h-3.5 shrink-0 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -37,7 +67,15 @@ export function ConnectionBanner() {
             />
           </svg>
         )}
-        {banner}
+        <span>{copy}</span>
+        {connectionDetail && <span className="font-mono text-[10px] opacity-80 truncate max-w-[45%]">{connectionDetail}</span>}
+        <button
+          type="button"
+          onClick={() => void checkConnection()}
+          className="underline underline-offset-2 hover:opacity-80 transition-opacity"
+        >
+          Check now
+        </button>
       </div>
     </div>
   );

@@ -4,7 +4,8 @@ export { App } from "./app";
 export { AgentAvatar } from "./components/agent-avatar";
 export { ChatInput } from "./components/chat-input";
 export { ChatMessage } from "./components/chat-message";
-export { ConnectionBanner } from "./components/connection-banner";
+export { ConnectionBanner, ConnectionDot } from "./components/connection-banner";
+export { DebugPanel } from "./components/debug-panel";
 export { ConversationBadge } from "./components/conversation-badge";
 export { DiffViewer } from "./components/diff-viewer";
 export { GitHubConnect } from "./components/github-connect";
@@ -57,9 +58,12 @@ export { default as db } from "./db";
 export { KNOWN_MODELS, knownWindowFor } from "./models";
 export type { ModelInfo } from "./models";
 export { createConnectionMonitor, hermesClient } from "./services/hermes";
+export { FIRST_BYTE_TIMEOUT_MS, STALL_TIMEOUT_MS, StreamError } from "./services/hermes";
+export { describeError, diagnostics, DiagnosticsLog } from "./services/diagnostics";
+export type { DiagnosticEvent, DiagnosticLevel } from "./services/diagnostics";
 export { getVercelKeyConfigured, saveVercelApiKey, dispatchDeploymentViaServer } from "./services/vercel-key";
 export type { VercelKeyStatus, DispatchDeploymentParams } from "./services/vercel-key";
-export type { ConnectionMonitorCallbacks, SessionRecord, SessionSummary, StreamCallbacks, StreamMessage, StreamOptions, StreamUsage } from "./services/hermes";
+export type { ConnectionMonitor, ConnectionMonitorCallbacks, HealthResult, SessionRecord, SessionSummary, StreamCallbacks, StreamFailureKind, StreamMessage, StreamOptions, StreamUsage, ToolProgress } from "./services/hermes";
 export {
   DirectGitHubTransport,
   GatewayGitHubTransport,
@@ -105,7 +109,7 @@ export {
   resolveRequiredChecks,
 } from "./services/repo-gates";
 export type { MergeEligibility, RepoGates, RequiredCheckResult, ReviewState } from "./services/repo-gates";
-export type { ChatState, ConnectionStatus, SlashCommand } from "./stores/chat";
+export type { ChatFailure, ChatState, ConnectionStatus, SlashCommand } from "./stores/chat";
 export { useChatStore } from "./stores/chat";
 export type { DeviceFlowState, GitHubState } from "./stores/github";
 export { useGitHubStore, setDesktopFetchImpl } from "./stores/github";
