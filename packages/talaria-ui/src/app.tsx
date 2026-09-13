@@ -257,10 +257,11 @@ export function App() {
                   aria-label="Close model menu"
                   onClick={() => setShowModelMenu(false)}
                 />
-                <div className="absolute right-0 mt-2 w-80 z-40 bg-slate-800 rounded-xl border border-slate-700 shadow-xl overflow-hidden">
+                <div className="absolute right-0 top-full mt-2 w-80 z-40 bg-slate-800 rounded-xl border border-slate-700 shadow-xl flex flex-col max-h-[75vh] overflow-hidden">
                   <div className="px-3 py-2 text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-700/60">
                     Model for this conversation
                   </div>
+                  <div className="overflow-y-auto min-h-0">
                   <button
                     type="button"
                     onClick={() => selectModel(null)}
@@ -287,6 +288,7 @@ export function App() {
                     </button>
                   ))}
                   {configuredModels.length === 0 && <div className="px-3 py-2 text-xs text-slate-500">No models detected.</div>}
+                  </div>
                   <form
                     className="flex items-center gap-2 px-3 py-2 border-t border-slate-700/60"
                     onSubmit={(e) => {
