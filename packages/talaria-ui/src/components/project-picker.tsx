@@ -91,7 +91,7 @@ export function ProjectPicker() {
       {open && (
         <>
           <button type="button" className="fixed inset-0 z-30" aria-label="Close project picker" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 mt-2 w-72 z-40 bg-slate-800 rounded-xl border border-slate-700 shadow-xl overflow-hidden">
+          <div className="absolute left-0 top-full mt-2 w-72 z-40 bg-slate-800 rounded-xl border border-slate-700 shadow-xl max-h-[70vh] overflow-y-auto">
             <div className="px-3 py-2 text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-700/60">
               Project scope
             </div>
