@@ -14,135 +14,82 @@
         </button>
       </div>
 
-      <div class="px-5 py-4 space-y-5">
-        <!-- API Key (optional for local gateway) -->
-        <div>
-          <label class="block text-xs font-medium text-slate-400 mb-1.5">API Key</label>
-          <input
-            v-model="keyInput"
-            type="password"
-            @keydown.enter="saveAll"
-            class="w-full bg-slate-800 text-sm rounded-lg px-3 py-2.5 border-none outline-none
-                   focus:ring-2 focus:ring-blue-500/50 text-slate-100 placeholder-slate-600"
-            placeholder="Required for gateway authentication"
-          />
-          <p class="text-xs text-slate-600 mt-1">
-            Hermes Gateway API Server key
-          </p>
-        </div>
-
-        <!-- Connection URL -->
-        <div>
-          <label class="block text-xs font-medium text-slate-400 mb-1.5">Hermes API URL</label>
-          <input
-            v-model="urlInput"
-            @keydown.enter="saveUrl"
-            class="w-full bg-slate-800 text-sm rounded-lg px-3 py-2.5 border-none outline-none
-                   focus:ring-2 focus:ring-blue-500/50 text-slate-100 placeholder-slate-600"
-            placeholder="http://localhost:8642/api/v1"
-          />
-          <p class="text-xs text-slate-600 mt-1">
-            Use <code class="text-slate-500">/api/v1</code> for local dev, or full URL for remote
-          </p>
-        </div>
-
+      <!-- Tabs -->
+      <div class="flex gap-1 px-5 pt-3 text-xs font-medium text-slate-500">
         <button
-          @click="saveAll"
-          class="w-full py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-sm font-medium transition-colors"
-        >
-          Save &amp; Reconnect
-        </button>
+          v-for="t in tabs"
+          :key="t.id"
+          @click="activeTab = t.id"
+          class="px-3 py-2 rounded-t-lg transition-colors"
+          :class="activeTab === t.id ? 'bg-slate-800 text-slate-200' : 'hover:text-slate-300'"
+        >{{ t.label }}</button>
+      </div>
 
-        <!-- Presets -->
-        <div class="space-y-1.5">
-          <p class="text-xs font-medium text-slate-500">Quick connect</p>
-          <button
-            v-for="preset in presets"
-            :key="preset.label"
-            @click="urlInput = preset.url"
-            class="w-full text-left px-3 py-2 rounded-lg text-sm text-slate-400
-                   hover:bg-slate-800 hover:text-slate-200 transition-colors
-                   flex items-center justify-between"
-          >
-            <span>{{ preset.label }}</span>
-            <span class="text-xs text-slate-600 font-mono">{{ preset.short }}</span>
+      <div class="px-5 py-4 space-y-5">
+        <!-- Connection tab -->
+        <div v-if="activeTab === 'connection'">
+          <label class="block text-xs font-medium text-slate-400 mb-1.5">API Key</label>
+          <input v-model="keyInput" type="password"
+            class="w-full bg-slate-800 text-sm rounded-lg px-3 py-2.5 border-none outline-none focus:ring-2 focus:ring-blue-500/50 text-slate-100"
+            placeholder="Required for gateway authentication" />
+
+          <label class="block text-xs font-medium text-slate-400 mb-1.5 mt-3">Hermes API URL</label>
+          <input v-model="urlInput" @keydown.enter="saveAll"
+            class="w-full bg-slate-800 text-sm rounded-lg px-3 py-2.5 border-none outline-none focus:ring-2 focus:ring-blue-500/50 text-slate-100"
+            placeholder="http://localhost:8642/api/v1" />
+
+          <button @click="saveAll" class="w-full py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-sm font-medium transition-colors mt-4">
+            Save &amp; Reconnect
           </button>
         </div>
 
-        <!-- Agents (profile contacts) -->
-        <div class="pt-1">
-          <div class="flex items-center justify-between mb-1.5">
-            <p class="text-xs font-medium text-slate-500">Agents (Hermes profiles)</p>
-            <button
-              @click="beginAdd"
-              class="text-xs text-blue-400 hover:text-blue-300 transition-colors"
-            >{{ editingAgent || addingAgent ? 'Cancel' : '+ Add' }}</button>
-          </div>
+        <!-- Goals tab -->
+        <div v-if="activeTab === 'goals'">
+          <!-- New goal form -->
+          <form @submit.prevent="submitGoal" class="space-y-3 bg-slate-800/40 rounded-lg p-4">
+            <div>
+              <label class="block text-xs font-medium text-slate-400 mb-1.5">Goal Title</label>
+              <input v-model="goalTitle" required
+                class="w-full bg-slate-800 text-sm rounded-lg px-3 py-2 border-none outline-none focus:ring-2 focus:ring-blue-500/50 text-slate-100"
+                placeholder="e.g., deploy kanban sync to dev" />
+            </div>
 
-          <!-- Add / edit agent form -->
-          <div v-if="addingAgent" class="space-y-2 mb-2 bg-slate-800/50 rounded-lg p-3">
-            <input
-              v-model="formName"
-              :disabled="!!editingAgent"
-              placeholder="Profile name (e.g. developer)"
-              class="w-full bg-slate-800 text-sm rounded-lg px-3 py-2 border-none outline-none
-                     focus:ring-2 focus:ring-blue-500/50 text-slate-100 placeholder-slate-600 disabled:opacity-50"
-            />
-            <input
-              v-model="formDisplay"
-              placeholder="Display name (optional)"
-              class="w-full bg-slate-800 text-sm rounded-lg px-3 py-2 border-none outline-none
-                     focus:ring-2 focus:ring-blue-500/50 text-slate-100 placeholder-slate-600"
-            />
-            <input
-              v-model="formApiKey"
-              type="password"
-              placeholder="API key (auto-filled from global if empty)"
-              class="w-full bg-slate-800 text-sm rounded-lg px-3 py-2 border-none outline-none
-                     focus:ring-2 focus:ring-blue-500/50 text-slate-100 placeholder-slate-600"
-            />
-            <button
-              @click="saveAgent"
-              :disabled="!formName.trim()"
-              class="w-full py-2 rounded-lg text-sm font-medium transition-colors"
-              :class="formName.trim()
-                ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                : 'bg-slate-800 text-slate-500 cursor-not-allowed'"
-            >{{ editingAgent ? 'Save agent' : 'Add agent' }}</button>
-            <p class="text-[11px] text-slate-600">
-              Each Hermes profile has its own API key. Requires
-              <code class="text-slate-500">gateway.multiplex_profiles</code> on the gateway.
-            </p>
-          </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-400 mb-1.5">Acceptance Criteria</label>
+              <textarea v-model="goalAC" required rows="3"
+                class="w-full bg-slate-800 text-sm rounded-lg px-3 py-2 border-none outline-none focus:ring-2 focus:ring-blue-500/50 text-slate-100"
+                placeholder="- Task moves to triage&#10;- Assignee set to developer&#10;- Build passes" />
+              <p class="text-xs text-slate-600 mt-1">One criterion per line (bullet list)</p>
+            </div>
 
-          <ul class="divide-y divide-slate-800/60">
-            <li v-for="agent in store.agents" :key="agent.name" class="flex items-center gap-3 py-2">
-              <AgentAvatar :name="agent.name" :display="agent.displayName" :color="agent.color" :size="9" />
-              <span class="flex-1 min-w-0">
-                <span class="block text-sm text-slate-200 truncate">{{ agent.displayName }}</span>
-                <span class="block text-xs text-slate-500 font-mono truncate">{{ agent.name }}</span>
-              </span>
-              <button
-                @click="beginEdit(agent)"
-                class="text-xs text-slate-400 hover:text-slate-200 transition-colors shrink-0"
-              >Edit</button>
-              <button
-                @click="store.removeAgent(agent.name)"
-                class="text-xs text-red-400 hover:text-red-300 transition-colors shrink-0"
-              >Remove</button>
+            <div>
+              <label class="block text-xs font-medium text-slate-400 mb-1.5">Board</label>
+              <select v-model="goalBoard"
+                class="w-full bg-slate-800 text-sm rounded-lg px-3 py-2 border-none outline-none focus:ring-2 focus:ring-blue-500/50 text-slate-100">
+                <option value="triage">Triage</option>
+                <option value="ready">Ready</option>
+                <option value="in-progress">In Progress</option>
+              </select>
+            </div>
+
+            <button type="submit"
+              class="w-full py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-sm font-medium transition-colors">
+              Create Goal
+            </button>
+          </form>
+
+          <!-- Existing goals list -->
+          <ul v-if="goals.length" class="divide-y divide-slate-800/60 mt-3">
+            <li v-for="g in goals" :key="g.id" class="py-2 flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <p class="text-sm text-slate-200 truncate">{{ g.title }}</p>
+                <p class="text-xs text-slate-500">{{ g.board }} &middot; task {{ g.kanbanTaskId }}</p>
+              </div>
+              <button @click="deleteGoal(g.id)" class="text-xs text-red-400 hover:text-red-300 shrink-0">Remove</button>
             </li>
           </ul>
-        </div>
 
-        <!-- Danger zone -->
-        <div class="pt-3 border-t border-slate-800">
-          <button
-            @click="clearAll"
-            class="w-full py-2.5 rounded-lg border border-red-500/30 text-red-400
-                   text-sm font-medium hover:bg-red-500/10 transition-colors"
-          >
-            Clear All Data
-          </button>
+          <p v-else class="text-xs text-slate-600 mt-2">No goals yet. Create one above.</p>
         </div>
       </div>
     </div>
@@ -150,73 +97,45 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
-import { useChatStore } from '../stores/chat.js'
+import { ref, onMounted } from 'vue'
+import { useGoalsStore } from '../stores/goals.js'
 import db from '../db.js'
-import AgentAvatar from './AgentAvatar.vue'
 
-const store = useChatStore()
 const emit = defineEmits(['close'])
+const store = useGoalsStore()
 
-const urlInput = ref(store.baseUrl)
-const keyInput = ref(store.apiKey)
-const addingAgent = ref(false)
-const editingAgent = ref(null)
-const formName = ref('')
-const formDisplay = ref('')
-const formApiKey = ref('')
-
-const presets = [
-  { label: 'Local (Vite proxy)', url: '/api/v1', short: '/api/v1' },
-  { label: 'Local direct', url: 'http://localhost:8642/api/v1', short: ':8642' },
-  { label: 'Cloudflare Tunnel', url: 'https://hermes.yourdomain.com/api/v1', short: 'CF' },
-  { label: 'Tailscale', url: 'http://100.x.x.x:8642/api/v1', short: 'TS' },
+const tabs = [
+  { id: 'connection', label: 'Connection' },
+  { id: 'goals', label: 'Goals' },
 ]
+const activeTab = ref('connection')
 
-function saveAll() {
-  store.setBaseUrl(urlInput.value)
-  store.setApiKey(keyInput.value)
-  emit('close')
+const urlInput = ref('')
+const keyInput = ref('')
+
+// Goal form state
+const goalTitle = ref('')
+const goalAC = ref('')
+const goalBoard = ref('triage')
+
+onMounted(() => {
+  store.loadGoals()
+})
+
+const goals = store.goals
+
+async function submitGoal() {
+  await store.createGoalLocal(goalTitle.value, goalAC.value, goalBoard.value)
+  goalTitle.value = ''
+  goalAC.value = ''
+  goalBoard.value = 'triage'
 }
 
-function beginAdd() {
-  editingAgent.value = null
-  formName.value = ''
-  formDisplay.value = ''
-  formApiKey.value = ''
-  addingAgent.value = !addingAgent.value
+async function deleteGoal(id) {
+  await store.removeGoal(id)
 }
 
-function beginEdit(agent) {
-  editingAgent.value = agent
-  formName.value = agent.name
-  formDisplay.value = agent.displayName || ''
-  formApiKey.value = agent.apiKey || ''
-  addingAgent.value = true
-}
-
-async function saveAgent() {
-  const name = formName.value.trim()
-  if (!name) return
-  await store.addAgent({
-    name,
-    displayName: formDisplay.value.trim(),
-    apiKey: formApiKey.value.trim()
-  })
-  editingAgent.value = null
-  formName.value = ''
-  formDisplay.value = ''
-  formApiKey.value = ''
-  addingAgent.value = false
-}
-
-async function clearAll() {
-  if (!confirm('Delete all conversations and messages? This cannot be undone.')) return
-  await db.messages.clear()
-  await db.conversations.clear()
-  store.messages = []
-  store.conversations = []
-  store.activeConversationId = null
+async function saveAll() {
   emit('close')
 }
 </script>
