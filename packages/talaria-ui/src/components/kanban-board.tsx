@@ -113,7 +113,7 @@ export function KanbanBoard({ onClose, onOpenSettings }: { onClose?: () => void;
   }
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
+    <div className="flex-1 flex flex-col overflow-hidden min-w-0">
       {/* Command Center toolbar */}
       <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-800 bg-slate-900/80 shrink-0">
         <span className="text-xs font-semibold text-slate-200">Command Center</span>
@@ -137,7 +137,7 @@ export function KanbanBoard({ onClose, onOpenSettings }: { onClose?: () => void;
       </div>
 
       {/* Board area */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden min-w-0">
       {authRequired ? (
         <div className="flex-1 flex items-center justify-center p-6">
           <div className="max-w-sm w-full rounded-xl border border-red-500/40 bg-red-950/30 p-6 text-center">
@@ -171,18 +171,19 @@ export function KanbanBoard({ onClose, onOpenSettings }: { onClose?: () => void;
         </div>
       ) : (
       <>
-      {/* Board columns */}
-      <div className="flex-1 flex gap-3 px-4 py-3 overflow-x-auto">
+      {/* Board columns — horizontal swipe on mobile (snap + near-full-width
+          columns with a peek of the next), classic row on desktop. */}
+      <div className="flex-1 flex gap-3 px-4 py-3 overflow-x-auto min-w-0 snap-x snap-proximity">
         {KANBAN_COLUMNS.map((col) => {
           const cards = cardsIn(col.key);
           return (
-            <div key={col.key} className="w-72 shrink-0 flex flex-col rounded-xl border border-slate-800 bg-slate-900/60 min-h-0">
+            <div key={col.key} className="w-72 max-sm:w-[82vw] shrink-0 snap-start flex flex-col rounded-xl border border-slate-800 bg-slate-900/60 min-h-0">
               <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-800 shrink-0">
                 <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: COLUMN_COLORS[col.key] }} />
                 <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider">{col.label}</span>
                 <span className="text-[10px] text-slate-500 ml-auto">{cards.length}</span>
               </div>
-              <div className="flex-1 overflow-y-auto p-2 space-y-2">
+              <div className="flex-1 overflow-y-auto p-1.5 sm:p-2 space-y-1.5 sm:space-y-2">
                 {cards.map((card) => (
                   <KanbanCardView
                     key={card.id}
@@ -233,17 +234,26 @@ export function KanbanBoard({ onClose, onOpenSettings }: { onClose?: () => void;
         </div>
       )}
 
-      {/* Task detail drawer */}
+      {/* Task detail drawer — side panel on desktop, full overlay on mobile
+          (side-by-side would crush the columns to nothing at 390px). */}
       {(selectedTaskId || detailLoading) && (
-        <div className="w-[400px] max-w-[85vw] shrink-0 border-l border-slate-800 bg-slate-950 flex flex-col">
-          <TaskDetail
+        <>
+          <button
+            type="button"
+            className="hidden max-sm:block absolute inset-0 z-30 bg-black/50"
+            aria-label="Close task detail"
+            onClick={closeDetail}
+          />
+          <div className="w-[400px] max-w-[85vw] shrink-0 border-l border-slate-800 bg-slate-950 flex flex-col max-sm:absolute max-sm:inset-y-0 max-sm:right-0 max-sm:z-40 max-sm:max-w-[92vw] max-sm:shadow-2xl max-sm:border max-sm:rounded-l-2xl max-sm:overflow-hidden">
+            <TaskDetail
             detail={detail}
             loading={detailLoading}
             onClose={closeDetail}
             onArchive={archiveTask}
             onUnblock={unblockTask}
           />
-        </div>
+          </div>
+        </>
       )}
 
       {error && (
@@ -273,7 +283,7 @@ function KanbanCardView({
     <button
       type="button"
       onClick={onSelect}
-      className={`w-full text-left px-3 py-2 rounded-lg border transition-colors ${
+      className={`w-full text-left px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-lg border transition-colors ${
         selected
           ? "border-blue-500 bg-slate-800/80"
           : card.status === "blocked"
@@ -295,8 +305,10 @@ function KanbanCardView({
         )}
         <span className="text-[9px] text-slate-500 ml-auto shrink-0">{ageMs ? fmtAge(ageMs) : ""}</span>
       </div>
-      <div className="text-xs font-medium text-slate-100 leading-snug line-clamp-2">{card.title}</div>
-      <div className="flex items-center gap-2 mt-1.5 text-[10px] text-slate-500">
+      {/* Compact on mobile: single-line title, meta footer hidden (full
+          detail lives in the drawer) — desktop keeps title + meta. */}
+      <div className="text-xs font-medium text-slate-100 leading-snug line-clamp-1 sm:line-clamp-2">{card.title}</div>
+      <div className="hidden sm:flex items-center gap-2 mt-1.5 text-[10px] text-slate-500">
         {(card.link_counts?.children ?? 0) > 0 && <span>{card.link_counts!.children} deps</span>}
         {(card.comment_count ?? 0) > 0 && <span>{card.comment_count} 💬</span>}
         {card.latest_summary && <span className="truncate flex-1">{card.latest_summary}</span>}

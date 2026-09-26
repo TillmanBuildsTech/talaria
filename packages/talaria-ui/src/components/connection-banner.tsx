@@ -42,3 +42,36 @@ export function ConnectionBanner() {
     </div>
   );
 }
+
+// Persistent presence pill for the app header — always visible (unlike the
+// banner, which only appears once already offline), so you can see at a
+// glance whether chat is live. Tap re-checks the gateway immediately.
+export function ConnectionPill() {
+  const connectionStatus = useChatStore((s) => s.connectionStatus);
+  const checkConnection = useChatStore((s) => s.checkConnection);
+
+  const dot =
+    connectionStatus === "offline"
+      ? "bg-red-400"
+      : connectionStatus === "reconnecting"
+        ? "bg-amber-400 animate-pulse"
+        : "bg-emerald-400";
+  const label = connectionStatus === "offline" ? "Offline" : connectionStatus === "reconnecting" ? "Reconnecting" : "Live";
+  const title =
+    connectionStatus === "connected"
+      ? "Connected to Hermes — tap to re-check"
+      : "Connection issue — tap to re-check now";
+
+  return (
+    <button
+      type="button"
+      onClick={() => void checkConnection()}
+      title={title}
+      aria-label={`Connection status: ${label}. Activate to re-check.`}
+      className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg hover:bg-slate-800 text-xs transition-colors shrink-0"
+    >
+      <span className={`w-1.5 h-1.5 rounded-full ${dot}`} />
+      <span className="hidden sm:inline text-slate-400">{label}</span>
+    </button>
+  );
+}

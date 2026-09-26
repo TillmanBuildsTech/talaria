@@ -128,7 +128,7 @@ export function ChatMessage({ message, onRetry }: ChatMessageProps) {
         {/* Failed state */}
         {!message.system && message.status === "failed" && (
           <div className="flex items-center gap-2 mt-1.5 pt-1.5 border-t border-red-500/30">
-            <svg className="w-3.5 h-3.5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <svg className="w-3.5 h-3.5 text-red-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -136,8 +136,9 @@ export function ChatMessage({ message, onRetry }: ChatMessageProps) {
                 d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"
               />
             </svg>
-            <button type="button" onClick={onRetry} className="text-xs text-red-400 hover:text-red-300 underline transition-colors">
-              Tap to retry
+            <span className="text-xs text-red-300/90 flex-1">{message.error || "Couldn't connect."}</span>
+            <button type="button" onClick={onRetry} className="text-xs text-red-400 hover:text-red-300 underline transition-colors shrink-0">
+              Retry
             </button>
           </div>
         )}

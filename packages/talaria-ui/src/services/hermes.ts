@@ -44,6 +44,10 @@ export type StreamOptions = {
   sessionId?: string;
   model?: string;
   provider?: string;
+  // Stall watchdog: a stream that yields no chunk for this long is treated
+  // as dead (abort → onError → the caller's retry ladder) instead of hanging
+  // the bubble on "streaming" forever. LLMs pause, but never this long.
+  stallTimeoutMs?: number;
 };
 
 export type SessionRecord = {
@@ -67,11 +71,15 @@ class HermesClient {
   // Track every in-flight AbortController so group-chat fan-out (multiple
   // concurrent streams) can be stopped all at once.
   activeControllers: Set<AbortController>;
+  // Stall-watchdog timers (one per in-flight stream) so abort() can clear
+  // them instead of leaking a 45s timer per cancelled stream.
+  stallTimers: Set<ReturnType<typeof setTimeout>>;
 
   constructor(baseUrl: string = DEFAULT_BASE) {
     this.baseUrl = baseUrl;
     this.apiKey = null;
     this.activeControllers = new Set();
+    this.stallTimers = new Set();
   }
 
   setBaseUrl(url: string) {
@@ -150,7 +158,29 @@ class HermesClient {
     if (provider) payload.provider = provider;
 
     // Ensure the controller is cleared on every exit path.
-    const release = () => this.activeControllers.delete(controller);
+    let stallTimer: ReturnType<typeof setTimeout> | null = null;
+    let stalled = false;
+    const release = () => {
+      this.activeControllers.delete(controller);
+      if (stallTimer) {
+        clearTimeout(stallTimer);
+        this.stallTimers.delete(stallTimer);
+        stallTimer = null;
+      }
+    };
+    // Stall watchdog: no chunk for `stallTimeoutMs` → kill the stream so the
+    // caller retries instead of hanging on "streaming" forever.
+    const pokeStall = () => {
+      if (stallTimer) {
+        clearTimeout(stallTimer);
+        this.stallTimers.delete(stallTimer);
+      }
+      stallTimer = setTimeout(() => {
+        stalled = true;
+        controller.abort();
+      }, opts.stallTimeoutMs ?? 45_000);
+      this.stallTimers.add(stallTimer);
+    };
 
     try {
       const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -189,10 +219,12 @@ class HermesClient {
       }
       const decoder = new TextDecoder();
       let buffer = "";
+      pokeStall();
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        pokeStall();
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
@@ -226,7 +258,12 @@ class HermesClient {
       await onDone?.();
     } catch (err) {
       release();
-      if (err instanceof Error && err.name === "AbortError") return;
+      if (err instanceof Error && err.name === "AbortError") {
+        // A stall-abort is a dead stream, not a user cancel — route it into
+        // the retry ladder like any other transport failure.
+        if (stalled) await onError?.(new Error("stream stalled: no data from gateway"));
+        return;
+      }
       await onError?.(err);
     }
   }
@@ -237,6 +274,10 @@ class HermesClient {
       c.abort();
     }
     this.activeControllers.clear();
+    for (const t of this.stallTimers) {
+      clearTimeout(t);
+    }
+    this.stallTimers.clear();
   }
 
   // ---------------------------------------------------------------------------
@@ -304,14 +345,54 @@ export const hermesClient = new HermesClient();
 // ---------------------------------------------------------------------------
 export type ConnectionMonitorCallbacks = {
   onOnline?: () => void;
+  onReconnecting?: () => void;
   onOffline?: () => void;
 };
 
-export function createConnectionMonitor(callbacks: ConnectionMonitorCallbacks) {
-  const { onOnline, onOffline } = callbacks;
+// Connection monitor — fires events when online/offline. The browser
+// online/offline events only reflect the device's network, NOT whether the
+// Hermes gateway is reachable, so the periodic health check drives the real
+// presence: first failed check → reconnecting, `unhealthyThreshold`
+// consecutive failures → offline, any success → online (recovering from a
+// transient outage as soon as the gateway answers again).
+export function createConnectionMonitor(
+  callbacks: ConnectionMonitorCallbacks,
+  opts: { intervalMs?: number; unhealthyThreshold?: number } = {}
+) {
+  const { onOnline, onReconnecting, onOffline } = callbacks;
+  const unhealthyThreshold = opts.unhealthyThreshold ?? 3;
+  let failures = 0;
 
-  const goOnline = () => onOnline?.();
-  const goOffline = () => onOffline?.();
+  async function checkNow(): Promise<boolean> {
+    let healthy = false;
+    try {
+      healthy = await hermesClient.healthCheck();
+    } catch {
+      healthy = false;
+    }
+    if (healthy) {
+      if (failures > 0) {
+        failures = 0;
+        onOnline?.();
+      }
+      return true;
+    }
+    failures += 1;
+    if (failures === 1) onReconnecting?.();
+    else if (failures === unhealthyThreshold) onOffline?.();
+    return false;
+  }
+
+  const goOnline = () => {
+    // Browser says the network is back — reset and verify the gateway itself.
+    failures = 0;
+    onOnline?.();
+    void checkNow();
+  };
+  const goOffline = () => {
+    failures = unhealthyThreshold;
+    onOffline?.();
+  };
 
   window.addEventListener("online", goOnline);
   window.addEventListener("offline", goOffline);
@@ -319,13 +400,10 @@ export function createConnectionMonitor(callbacks: ConnectionMonitorCallbacks) {
   // Also periodically health-check the Hermes endpoint
   let healthInterval: ReturnType<typeof setInterval> | null = null;
 
-  function startHealthChecks(intervalMs = 15_000) {
+  function startHealthChecks(intervalMs = opts.intervalMs ?? 15_000) {
     stopHealthChecks();
-    healthInterval = setInterval(async () => {
-      const healthy = await hermesClient.healthCheck();
-      // Recover from a transient "offline" (e.g. a failed send) as soon as the
-      // gateway is reachable again, even if the browser thinks it's online.
-      if (healthy) goOnline();
+    healthInterval = setInterval(() => {
+      void checkNow();
     }, intervalMs);
   }
 
@@ -344,5 +422,6 @@ export function createConnectionMonitor(callbacks: ConnectionMonitorCallbacks) {
     },
     startHealthChecks,
     stopHealthChecks,
+    checkNow,
   };
 }

@@ -45,6 +45,9 @@ export type ChatMessage = {
   tokens?: number | null;
   contextTokens?: number | null;
   modelName?: string | null;
+  // Human-readable failure reason for status === "failed" (shown in the
+  // bubble; cleared on retry/reconnect). Non-indexed — no migration.
+  error?: string | null;
 };
 
 export type ConversationKind = "default" | "dm" | "group";

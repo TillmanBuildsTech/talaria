@@ -134,6 +134,12 @@ export type ChatState = {
   // ── actions ───────────────────────────────────────────────────────────
   init: () => Promise<void>;
   destroy: () => void;
+  // Manual gateway presence re-check (header status pill).
+  checkConnection: () => Promise<void>;
+  // Re-pull the active conversation from the gateway (cross-device freshness).
+  refreshActive: (force?: boolean) => Promise<void>;
+  // Re-send failed assistant replies in the active conversation.
+  retryFailedMessages: () => Promise<void>;
   loadAgents: () => Promise<void>;
   addAgent: (agent: { name: string; displayName?: string; color?: string; description?: string; apiKey?: string }) => Promise<void>;
   removeAgent: (name: string) => Promise<void>;
@@ -167,6 +173,11 @@ export type ChatState = {
 };
 
 let connectionMonitor: ReturnType<typeof createConnectionMonitor> | null = null;
+// Last auto-refresh timestamps (module-scoped, not reactive state): focus and
+// online events fire in bursts, and server discovery is heavier than a single
+// conversation sync, so each has its own throttle window.
+let lastActiveRefresh = 0;
+let lastDiscover = 0;
 
 export const useChatStore = create<ChatState>((set, get) => ({
   messages: [],
@@ -537,12 +548,29 @@ export const useChatStore = create<ChatState>((set, get) => ({
       await get().syncConversationFromServer(conv ?? null);
     }
 
-    // Start connection monitoring
+    // Start connection monitoring. The monitor drives real presence (gateway
+    // health, not just browser network): reconnecting on the first failed
+    // check, offline after consecutive failures, online on recovery — and on
+    // recovery the active chat refreshes and failed sends auto-retry, so the
+    // user rarely needs the manual retry button at all.
     connectionMonitor = createConnectionMonitor({
-      onOnline: () => set({ connectionStatus: "connected" }),
+      onOnline: () => {
+        set({ connectionStatus: "connected", error: null });
+        void get().refreshActive(true);
+        void get().retryFailedMessages();
+      },
+      onReconnecting: () => {
+        if (get().connectionStatus === "connected") set({ connectionStatus: "reconnecting" });
+      },
       onOffline: () => set({ connectionStatus: "offline" }),
     });
     connectionMonitor.startHealthChecks();
+
+    // Refresh the open chat whenever the app regains focus/visibility (this
+    // is what pulls in turns written elsewhere without an app restart) and
+    // re-verify the gateway on the way back.
+    window.addEventListener("focus", handleAppVisible);
+    document.addEventListener("visibilitychange", handleAppVisible);
 
     // Initial status
     set({ connectionStatus: navigator.onLine ? "connected" : "offline" });
@@ -550,8 +578,58 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   // Teardown
   destroy() {
+    window.removeEventListener("focus", handleAppVisible);
+    document.removeEventListener("visibilitychange", handleAppVisible);
     connectionMonitor?.destroy();
+    connectionMonitor = null;
     hermesClient.abort();
+  },
+
+  // Manual presence re-check (header status pill). Resolves the current
+  // gateway reachability immediately instead of waiting for the next tick.
+  async checkConnection() {
+    if (connectionMonitor) {
+      const ok = await connectionMonitor.checkNow();
+      set({ connectionStatus: ok ? "connected" : "reconnecting", error: null });
+      if (ok) {
+        void get().refreshActive(true);
+        void get().retryFailedMessages();
+      }
+    }
+  },
+
+  // Re-pull the active conversation from the gateway (source of truth) so
+  // turns written on another device/session appear without a restart.
+  // Skips while streaming (the stream owns the timeline) and throttles
+  // repeat calls unless forced.
+  async refreshActive(force = false) {
+    if (get().isStreaming()) return;
+    const now = Date.now();
+    if (!force && now - lastActiveRefresh < 10_000) return;
+    lastActiveRefresh = now;
+    const { activeConversationId } = get();
+    if (activeConversationId) {
+      const conv = await db.conversations.get(activeConversationId);
+      await get().syncConversationFromServer(conv ?? null);
+    }
+    // Heavier cross-device discovery (all profiles) runs at most once a
+    // minute — it surfaces brand-new conversations started elsewhere.
+    if (force || now - lastDiscover > 60_000) {
+      lastDiscover = now;
+      await discoverServerConversations(get);
+    }
+  },
+
+  // Re-send every failed assistant reply in the active conversation (called
+  // automatically on reconnect; the per-bubble Retry button stays manual).
+  async retryFailedMessages() {
+    if (get().isStreaming()) return;
+    const { messages } = get();
+    const failed = messages.filter((m) => m.status === "failed" && m.id != null);
+    for (const m of failed) {
+      await get().retryMessage(m.id as number);
+      if (get().isStreaming()) return;
+    }
   },
 
   // Switch conversation
@@ -686,7 +764,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       updatedAt: Date.now(),
     });
 
-    set({ connectionStatus: "connected" });
+    // NOTE: connection status is owned by the monitor + stream callbacks —
+    // sending must not claim "connected" before the first byte arrives.
 
     // 3. Stream a reply from each target.
     hermesClient.abort(); // cancel any stale streams
@@ -891,6 +970,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
 // surface (mirrors private closures in the original Pinia setup-store).
 // ---------------------------------------------------------------------------
 
+// App regained focus/visibility: re-verify the gateway and pull any turns
+// written elsewhere into the open chat. refreshActive throttles itself, so
+// bursty focus events are cheap.
+function handleAppVisible() {
+  if (document.visibilityState === "hidden") return;
+  void connectionMonitor?.checkNow();
+  void useChatStore.getState().refreshActive();
+}
+
 // Ensure this conversation has a Hermes session id for the given agent,
 // minting and persisting one if missing. The gateway persists every turn
 // under this id, which is what makes history follow across devices.
@@ -958,16 +1046,24 @@ async function streamTo(
   const maxRetries = 3;
   const retryDelay = 2000;
 
-  const finish = async (status: "done" | "failed") => {
+  // Failure reason stored on the bubble: offline (device or gateway) vs a
+  // transport error. Auto-retry on reconnect covers both, the text explains.
+  const failReason = () =>
+    !navigator.onLine || get().connectionStatus === "offline"
+      ? "You're offline — will retry when reconnected."
+      : "Couldn't reach Hermes — will retry automatically.";
+
+  const finish = async (status: "done" | "failed", errorDetail?: string | null) => {
     const msg = get().messages.find((m) => m.id === assistantId);
     if (!msg) return;
     const elapsedMs = status === "done" ? Date.now() - (msg.startedAt || Date.now()) : msg.elapsedMs;
-    patchMessage(set, get, assistantId, { status, elapsedMs });
+    patchMessage(set, get, assistantId, { status, elapsedMs, error: status === "failed" ? (errorDetail ?? null) : null });
     set({ activeStreams: Math.max(0, get().activeStreams - 1) });
     const updated = get().messages.find((m) => m.id === assistantId);
     await db.messages.update(assistantId, {
       content: updated?.content,
       status,
+      error: status === "failed" ? (errorDetail ?? null) : null,
       startedAt: updated?.startedAt,
       elapsedMs: updated?.elapsedMs,
       tokens: updated?.tokens,
@@ -1034,8 +1130,8 @@ async function streamTo(
               set({ connectionStatus: "reconnecting" });
               setTimeout(attempt, retryDelay * retries);
             } else {
-              set({ connectionStatus: "offline", error: "Connection lost. Tap to retry." });
-              await finish("failed");
+              set({ connectionStatus: "offline", error: failReason() });
+              await finish("failed", failReason());
             }
           },
           onSessionId(sid) {
@@ -1063,8 +1159,8 @@ async function streamTo(
         set({ connectionStatus: "reconnecting" });
         setTimeout(attempt, retryDelay * retries);
       } else {
-        set({ connectionStatus: "offline", error: "Connection lost. Tap to retry." });
-        await finish("failed");
+        set({ connectionStatus: "offline", error: failReason() });
+        await finish("failed", failReason());
       }
     }
   };

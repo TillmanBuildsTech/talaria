@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ChatInput } from "./components/chat-input";
 import { ChatMessage } from "./components/chat-message";
 import { CodeEditor } from "./components/code-editor";
-import { ConnectionBanner } from "./components/connection-banner";
+import { ConnectionBanner, ConnectionPill } from "./components/connection-banner";
 import { Deployments } from "./components/deployments";
 import { NavRail, type NavModuleId } from "./components/nav-rail";
 import { DocsEditor } from "./components/docs-editor";
@@ -241,7 +241,8 @@ export function App() {
           )}
         </div>
 
-        {/* Model picker + context (only once a conversation is open) */}
+        {/* Connection presence (always visible) + model picker (per-conversation) */}
+        <ConnectionPill />
         {activeConversationId && (
           <div className="relative shrink-0">
             <button
@@ -345,7 +346,7 @@ export function App() {
       )}
 
       {/* Body: left nav rail + active module */}
-      <div className="flex flex-1 min-h-0">
+      <div className="flex flex-1 min-h-0 min-w-0">
         <NavRail active={module} onSelect={setModule} />
         {module === "observability" ? (
           <div className="flex-1 min-h-0">
@@ -364,7 +365,7 @@ export function App() {
             <DocsEditor />
           </div>
         ) : module === "command-center" ? (
-          <div className="flex-1 min-h-0">
+          <div className="flex-1 min-h-0 min-w-0">
             <KanbanBoard onOpenSettings={() => setModule("settings")} />
           </div>
         ) : module === "editor" ? (

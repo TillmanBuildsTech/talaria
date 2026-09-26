@@ -210,7 +210,10 @@ export class GatewayDocsTransport implements DocsTransport {
   constructor(
     public origin: string,
     public apiKey: string | null,
-    private fetchImpl: typeof fetch = fetch
+    // Bound to globalThis: a bare `fetch` reference called as
+    // `this.fetchImpl(...)` loses its window receiver and throws
+    // "Illegal invocation" in the browser (same pattern as github.ts).
+    private fetchImpl: typeof fetch = fetch.bind(globalThis as typeof globalThis & Window)
   ) {}
 
   private async req<T>(method: string, path: string, body?: unknown): Promise<T> {
