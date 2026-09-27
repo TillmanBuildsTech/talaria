@@ -40,6 +40,14 @@ export const KNOWN_MODELS: Array<ModelInfo> = [
   { model: "openai/o3", provider: "openrouter", contextLength: 200_000 },
   { model: "openai/o4-mini", provider: "openrouter", contextLength: 200_000 },
 
+  // Meta Muse (via OpenRouter) — Spark 1M, Glimmer 128k
+  { model: "meta/muse-spark-1.3", provider: "openrouter", contextLength: 1_048_576 },
+  { model: "meta/muse-spark-1.3-contributor", provider: "openrouter", contextLength: 1_048_576 },
+  { model: "meta/muse-spark-1.2", provider: "openrouter", contextLength: 1_048_576 },
+  { model: "meta/muse-spark-1.2-contributor", provider: "openrouter", contextLength: 1_048_576 },
+  { model: "meta/muse-spark-1.1", provider: "openrouter", contextLength: 1_048_576 },
+  { model: "meta/muse-glimmer-30b", provider: "openrouter", contextLength: 131_072 },
+
   // NVIDIA Nemotron
   { model: "nvidia/nemotron-3-super-120b-a12b:free", provider: "openrouter", contextLength: 131_072 },
   { model: "nvidia/nemotron-3-ultra-550b-a55b", provider: "openrouter", contextLength: 256_000 },

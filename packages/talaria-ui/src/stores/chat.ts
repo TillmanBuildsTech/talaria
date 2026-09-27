@@ -1,7 +1,8 @@
 import { create } from "zustand";
 import db, { type Agent, type ChatMessage, type Conversation } from "../db";
 import { KNOWN_MODELS, type ModelInfo, knownWindowFor } from "../models";
-import { createConnectionMonitor, hermesClient } from "../services/hermes";
+import { describeError, diagnostics } from "../services/diagnostics";
+import { StreamError, type StreamFailureKind, createConnectionMonitor, hermesClient } from "../services/hermes";
 import { useProjectsStore } from "./projects";
 import { useObservabilityStore } from "./observability";
 
@@ -19,7 +20,16 @@ function inScope(conv: Conversation): boolean {
   return (conv.projectId ?? null) === activeScope();
 }
 
-export type ConnectionStatus = "connected" | "reconnecting" | "offline";
+export type ConnectionStatus = "connecting" | "connected" | "reconnecting" | "offline";
+
+/** Why a turn failed + whether retrying is worth the user's time. */
+export type ChatFailure = {
+  kind: StreamFailureKind;
+  message: string;
+  detail?: string;
+  retriable: boolean;
+  at: number;
+};
 
 export type SlashCommand = { cmd: string; desc: string };
 
@@ -93,9 +103,10 @@ export type ChatState = {
   // agentName -> { model, provider, contextLength } (from /talaria-config;
   // the models Hermes is actually configured to run per profile).
   modelsMap: Record<string, ModelInfo>;
-  // Fallback models from every profile's `fallback_providers` (from
-  // /talaria-config). Real configured models, offered ungated.
-  fallbackModels: Array<ModelInfo>;
+  // User-added models (via the dropdown's custom-model entry). Merged into
+  // the dropdown ungated and persisted to settings — the escape hatch for
+  // any model the curated catalog doesn't list yet.
+  customModels: Record<string, ModelInfo>;
   // Model providers the host has credentials for (from /talaria-config, read
   // from the host's .env files). Only their models are shown in the dropdown.
   availableModelProviders: Array<string>;
@@ -104,6 +115,10 @@ export type ChatState = {
   baseUrl: string;
   apiKey: string;
   error: string | null;
+  /** Why the last turn failed (cleared on the next successful send). */
+  lastError: ChatFailure | null;
+  /** Live gateway-health text ("gateway reachable", "API key rejected", …). */
+  connectionDetail: string | null;
   // Count of in-flight streams (group fan-out can have several at once).
   activeStreams: number;
   COMMANDS: Array<SlashCommand>;
@@ -122,8 +137,9 @@ export type ChatState = {
   activeContextTokens: () => number;
   activeModelName: () => string | null;
   activeContextWindow: () => number;
-  setConversationModel: (modelName: string | null, provider?: string | null) => void;
-  activeModelProvider: () => string | null;
+  setConversationModel: (modelName: string | null) => void;
+  /** Add a user-specified model to the dropdown (persisted to settings). */
+  addCustomModel: (model: string, provider?: string) => Promise<void>;
 
   // ── helpers ───────────────────────────────────────────────────────────
   agentDisplay: (name: string | null | undefined) => string | null;
@@ -134,12 +150,6 @@ export type ChatState = {
   // ── actions ───────────────────────────────────────────────────────────
   init: () => Promise<void>;
   destroy: () => void;
-  // Manual gateway presence re-check (header status pill).
-  checkConnection: () => Promise<void>;
-  // Re-pull the active conversation from the gateway (cross-device freshness).
-  refreshActive: (force?: boolean) => Promise<void>;
-  // Re-send failed assistant replies in the active conversation.
-  retryFailedMessages: () => Promise<void>;
   loadAgents: () => Promise<void>;
   addAgent: (agent: { name: string; displayName?: string; color?: string; description?: string; apiKey?: string }) => Promise<void>;
   removeAgent: (name: string) => Promise<void>;
@@ -159,6 +169,8 @@ export type ChatState = {
   stopStreaming: () => Promise<void>;
   setBaseUrl: (url: string) => Promise<void>;
   setApiKey: (key: string) => Promise<void>;
+  /** Probe gateway health now (the connection pill's tap handler). */
+  checkConnection: () => Promise<void>;
 
   // slash commands
   runCommand: (raw: string) => Promise<boolean>;
@@ -173,24 +185,21 @@ export type ChatState = {
 };
 
 let connectionMonitor: ReturnType<typeof createConnectionMonitor> | null = null;
-// Last auto-refresh timestamps (module-scoped, not reactive state): focus and
-// online events fire in bursts, and server discovery is heavier than a single
-// conversation sync, so each has its own throttle window.
-let lastActiveRefresh = 0;
-let lastDiscover = 0;
 
 export const useChatStore = create<ChatState>((set, get) => ({
   messages: [],
   conversations: [],
   agents: [],
   modelsMap: {},
-  fallbackModels: [],
+  customModels: {},
   availableModelProviders: [],
   activeConversationId: null,
-  connectionStatus: "connected",
+  connectionStatus: "connecting",
   baseUrl: "/api/v1",
   apiKey: typeof __HERMES_API_KEY__ !== "undefined" ? (__HERMES_API_KEY__ ?? "") : "",
   error: null,
+  lastError: null,
+  connectionDetail: null,
   activeStreams: 0,
   COMMANDS,
 
@@ -241,20 +250,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   // Model dropdown list: the curated realistic catalog (models Hermes supports
-  // on the in-use providers) PLUS each profile's configured default PLUS every
-  // profile's fallback_providers entries. Deduped by model+provider so the
-  // same id on different providers shows as distinct runnable options.
+  // on the in-use providers) PLUS each profile's configured default. Deduped by
+  // model id so per-profile entries that match the catalog collapse into one.
   configuredModels: () => {
-    const { availableModelProviders, fallbackModels, modelsMap } = get();
-    // Dedupe by model+provider: the same id can exist on several providers
-    // (deepseek-v4-flash on deepseek vs opencode-go) and each is a distinct
-    // runnable option with its own override pair.
+    const { availableModelProviders, modelsMap, customModels } = get();
     const out: Record<string, ModelInfo> = {};
     const add = (model: string | undefined, provider: string | undefined, ctx: number | null | undefined) => {
       if (!model) return;
-      const k = `${provider || ""}|||${model}`;
-      const cur = out[k];
-      out[k] = {
+      const cur = out[model];
+      out[model] = {
         model,
         provider: cur?.provider || provider || "",
         contextLength: cur?.contextLength || ctx || null,
@@ -270,13 +274,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     for (const info of Object.values(modelsMap)) {
       if (info?.model) add(info.model, info.provider, info.contextLength);
     }
-    // Fallback models are explicitly configured in Hermes, so they are
-    // offered as-is (ungated) — this is also how opencode/openrouter free
-    // tier models reach the dropdown.
-    for (const info of fallbackModels) {
-      if (info?.model) add(info.model, info.provider, info.contextLength ?? null);
+    // User-added models are always shown (explicit choice beats the gate).
+    for (const info of Object.values(customModels)) {
+      if (info?.model) add(info.model, info.provider, info.contextLength);
     }
-    return Object.values(out).sort((a, b) => a.model.localeCompare(b.model) || a.provider.localeCompare(b.provider));
+    return Object.values(out).sort((a, b) => a.model.localeCompare(b.model));
   },
   contextWindowFor: (model) => {
     if (!model) return DEFAULT_CONTEXT_WINDOW;
@@ -321,27 +323,31 @@ export const useChatStore = create<ChatState>((set, get) => ({
     return agentModel(agent);
   },
   activeContextWindow: () => get().contextWindowFor(get().activeModelName() || ""),
-  // Provider paired with the active conversation's model override (null when
-  // the conversation uses the profile default — providerFor resolves those).
-  activeModelProvider: () => {
-    const { conversations, activeConversationId } = get();
-    if (!activeConversationId) return null;
-    const conv = conversations.find((c) => c.id === activeConversationId);
-    return conv?.model ? conv.modelProvider || null : null;
-  },
 
-  // Set (or clear, null) a per-conversation model override, paired with its
-  // provider (the same model id can exist on several providers).
-  setConversationModel: (modelName, provider) => {
+  // Set (or clear, null) a per-conversation model override.
+  setConversationModel: (modelName) => {
     const { activeConversationId, conversations } = get();
     if (!activeConversationId) return;
     const m = (modelName || "").trim() || null;
-    const p = m ? (provider || "").trim() || null : null;
     const conv = conversations.find((c) => c.id === activeConversationId);
     if (conv) {
-      set({ conversations: conversations.map((c) => (c.id === conv.id ? { ...c, model: m, modelProvider: p } : c)) });
+      set({ conversations: conversations.map((c) => (c.id === conv.id ? { ...c, model: m } : c)) });
     }
-    db.conversations.update(activeConversationId, { model: m, modelProvider: p });
+    db.conversations.update(activeConversationId, { model: m });
+  },
+
+  // Add a user-specified model to the dropdown and select it for the active
+  // conversation. Provider defaults to openrouter (the host-wide credential);
+  // pass an explicit provider for native (non-OpenRouter) models.
+  addCustomModel: async (model, provider) => {
+    const m = (model || "").trim();
+    if (!m) return;
+    const p = (provider || "").trim() || "openrouter";
+    const entry: ModelInfo = { model: m, provider: p, contextLength: knownWindowFor(m) };
+    const next = { ...get().customModels, [m]: entry };
+    set({ customModels: next });
+    await db.settings.put({ key: "customModels", value: JSON.stringify(next) });
+    get().setConversationModel(m);
   },
 
   // Members of the active group conversation (for mention chips/hints).
@@ -473,7 +479,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
               createdAt: m.timestamp || Date.now(),
               agentName,
             }));
-        } catch {
+        } catch (err) {
+          // A profile whose history can't be read (missing key, gateway 5xx,
+          // old session) must not blank the chat — but it must not vanish
+          // either: say which profile failed and why.
+          diagnostics.warn("chat.sync", `Could not load server history for ${agentName ?? "default"}`, {
+            sessionId: sid,
+            ...describeError(err),
+          });
           return [];
         }
       })
@@ -535,6 +548,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
       hermesClient.setApiKey(get().apiKey);
     }
 
+    // Restore user-added custom models (persisted by addCustomModel).
+    try {
+      const savedModels = await db.settings.get("customModels");
+      if (savedModels?.value) {
+        const parsed = JSON.parse(savedModels.value) as Record<string, ModelInfo>;
+        if (parsed && typeof parsed === "object") set({ customModels: parsed });
+      }
+    } catch {
+      // Corrupt entry — start clean rather than break init.
+    }
+
     await get().loadAgents();
     // Fill agents with their real per-profile API keys (serve.mjs config).
     await applyServerConfig(set, get);
@@ -548,88 +572,45 @@ export const useChatStore = create<ChatState>((set, get) => ({
       await get().syncConversationFromServer(conv ?? null);
     }
 
-    // Start connection monitoring. The monitor drives real presence (gateway
-    // health, not just browser network): reconnecting on the first failed
-    // check, offline after consecutive failures, online on recovery — and on
-    // recovery the active chat refreshes and failed sends auto-retry, so the
-    // user rarely needs the manual retry button at all.
+    // Start connection monitoring. Presence is driven by a REAL gateway probe
+    // (/v1/models through the app's own origin), never by navigator.onLine —
+    // the browser reports the device network, not whether the gateway is up.
+    // One failed probe is not enough to declare the gateway offline.
     connectionMonitor = createConnectionMonitor({
       onOnline: () => {
-        set({ connectionStatus: "connected", error: null });
-        void get().refreshActive(true);
-        void get().retryFailedMessages();
+        set({ connectionStatus: "connected" });
+        void flushPendingRetries(set, get);
       },
-      onReconnecting: () => {
-        if (get().connectionStatus === "connected") set({ connectionStatus: "reconnecting" });
+      onOffline: () => {
+        diagnostics.warn("health", "Gateway unreachable — marking the connection offline");
+        set({ connectionStatus: "offline" });
       },
-      onOffline: () => set({ connectionStatus: "offline" }),
+      onProbe: (result) => {
+        set({
+          connectionDetail: `${result.reason} · ${result.tookMs}ms`,
+          connectionStatus: result.reachable ? "connected" : get().connectionStatus === "connecting" ? "reconnecting" : get().connectionStatus,
+        });
+      },
     });
     connectionMonitor.startHealthChecks();
-
-    // Refresh the open chat whenever the app regains focus/visibility (this
-    // is what pulls in turns written elsewhere without an app restart) and
-    // re-verify the gateway on the way back.
-    window.addEventListener("focus", handleAppVisible);
-    document.addEventListener("visibilitychange", handleAppVisible);
-
-    // Initial status
-    set({ connectionStatus: navigator.onLine ? "connected" : "offline" });
+    const health = await connectionMonitor.checkNow();
+    diagnostics.info("chat.init", "Chat store ready", {
+      gateways: connectionMonitor ? "monitoring" : "off",
+      baseUrl: get().baseUrl,
+      agents: get().agents.length,
+      conversations: get().conversations.length,
+      health: `${health.reason} (${health.status ?? "no response"}, ${health.tookMs}ms)`,
+      hasApiKey: Boolean(get().apiKey),
+    });
   },
 
   // Teardown
   destroy() {
-    window.removeEventListener("focus", handleAppVisible);
-    document.removeEventListener("visibilitychange", handleAppVisible);
     connectionMonitor?.destroy();
-    connectionMonitor = null;
+    for (const t of retryTimers.values()) clearTimeout(t);
+    retryTimers.clear();
     hermesClient.abort();
-  },
-
-  // Manual presence re-check (header status pill). Resolves the current
-  // gateway reachability immediately instead of waiting for the next tick.
-  async checkConnection() {
-    if (connectionMonitor) {
-      const ok = await connectionMonitor.checkNow();
-      set({ connectionStatus: ok ? "connected" : "reconnecting", error: null });
-      if (ok) {
-        void get().refreshActive(true);
-        void get().retryFailedMessages();
-      }
-    }
-  },
-
-  // Re-pull the active conversation from the gateway (source of truth) so
-  // turns written on another device/session appear without a restart.
-  // Skips while streaming (the stream owns the timeline) and throttles
-  // repeat calls unless forced.
-  async refreshActive(force = false) {
-    if (get().isStreaming()) return;
-    const now = Date.now();
-    if (!force && now - lastActiveRefresh < 10_000) return;
-    lastActiveRefresh = now;
-    const { activeConversationId } = get();
-    if (activeConversationId) {
-      const conv = await db.conversations.get(activeConversationId);
-      await get().syncConversationFromServer(conv ?? null);
-    }
-    // Heavier cross-device discovery (all profiles) runs at most once a
-    // minute — it surfaces brand-new conversations started elsewhere.
-    if (force || now - lastDiscover > 60_000) {
-      lastDiscover = now;
-      await discoverServerConversations(get);
-    }
-  },
-
-  // Re-send every failed assistant reply in the active conversation (called
-  // automatically on reconnect; the per-bubble Retry button stays manual).
-  async retryFailedMessages() {
-    if (get().isStreaming()) return;
-    const { messages } = get();
-    const failed = messages.filter((m) => m.status === "failed" && m.id != null);
-    for (const m of failed) {
-      await get().retryMessage(m.id as number);
-      if (get().isStreaming()) return;
-    }
+    diagnostics.info("chat", "Chat store torn down");
   },
 
   // Switch conversation
@@ -764,8 +745,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
       updatedAt: Date.now(),
     });
 
-    // NOTE: connection status is owned by the monitor + stream callbacks —
-    // sending must not claim "connected" before the first byte arrives.
+    diagnostics.info("chat.send", `Sending to ${targets.map((t) => agentKeyName(t)).join(", ")}`, {
+      conversationId: conv.id,
+      kind: conv.kind,
+      chars: text.length,
+      streaming: get().isStreaming(),
+    });
 
     // 3. Stream a reply from each target.
     hermesClient.abort(); // cancel any stale streams
@@ -779,9 +764,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
   async retryMessage(messageId) {
     const { messages } = get();
     const msg = messages.find((m) => m.id === messageId);
-    if (!msg || msg.status !== "failed") return;
+    if (!msg) return;
+    if (msg.status !== "failed") {
+      diagnostics.debug("chat.retry", "Retry ignored — the message is not in a failed state", { messageId, status: msg.status });
+      return;
+    }
+    pendingRetries.delete(messageId);
 
-    set({ messages: messages.filter((m) => m.id !== messageId) });
+    diagnostics.info("chat.retry", "Re-sending a failed turn", {
+      messageId,
+      reason: msg.errorText || "(unknown)",
+      kind: msg.errorKind || "(unknown)",
+      attempts: msg.attempts ?? 0,
+    });
+
+    set({ messages: messages.filter((m) => m.id !== messageId), lastError: null, error: null });
     await db.messages.delete(messageId);
 
     const userMsg = [...get().messages]
@@ -796,6 +793,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   // Stop all streaming, mark partial content as final.
   async stopStreaming() {
+    diagnostics.info("chat.stop", "Stop requested — aborting in-flight streams");
+    for (const t of retryTimers.values()) clearTimeout(t);
+    retryTimers.clear();
     hermesClient.abort();
     const { messages } = get();
     for (const m of messages) {
@@ -804,24 +804,39 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
     }
     set({
-      messages: messages.map((m) => (m.status === "streaming" ? { ...m, status: "done" } : m)),
+      messages: messages.map((m) => (m.status === "streaming" ? { ...m, status: "done", toolStatus: null } : m)),
       activeStreams: 0,
-      connectionStatus: "connected",
+      error: null,
     });
+  },
+
+  // Probe the gateway right now (the connection pill's tap handler).
+  async checkConnection() {
+    if (!connectionMonitor) return;
+    diagnostics.debug("health", "Manual health check requested");
+    const result = await connectionMonitor.checkNow();
+    set({ connectionDetail: `${result.reason} · ${result.tookMs}ms` });
+    if (result.reachable) set({ connectionStatus: "connected" });
   },
 
   // Set custom base URL
   async setBaseUrl(url) {
+    diagnostics.info("chat.config", "Base URL changed", { url });
     set({ baseUrl: url });
     hermesClient.setBaseUrl(url);
     await db.settings.put({ key: "baseUrl", value: url });
+    await get().checkConnection();
   },
 
   // Set API key
   async setApiKey(key) {
+    diagnostics.info("chat.config", "API key updated", { length: key.length });
     set({ apiKey: key });
     hermesClient.setApiKey(key);
     await db.settings.put({ key: "apiKey", value: key });
+    // A new key changes what the gateway will accept — re-probe immediately so
+    // a stale "API key rejected" state clears the moment it is fixed.
+    await get().checkConnection();
   },
 
   // ── Slash commands ─────────────────────────────────────────────────────
@@ -970,15 +985,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
 // surface (mirrors private closures in the original Pinia setup-store).
 // ---------------------------------------------------------------------------
 
-// App regained focus/visibility: re-verify the gateway and pull any turns
-// written elsewhere into the open chat. refreshActive throttles itself, so
-// bursty focus events are cheap.
-function handleAppVisible() {
-  if (document.visibilityState === "hidden") return;
-  void connectionMonitor?.checkNow();
-  void useChatStore.getState().refreshActive();
-}
-
 // Ensure this conversation has a Hermes session id for the given agent,
 // minting and persisting one if missing. The gateway persists every turn
 // under this id, which is what makes history follow across devices.
@@ -996,6 +1002,24 @@ async function ensureSession(conv: Conversation, agentName: string | null | unde
 // Stream a single agent reply. Builds context from the stored conversation
 // (stable under concurrent fan-out), appends its own placeholder message
 // tagged with the agent name, and routes the request to /p/<agent>/.
+//
+// Retry policy (rewritten — the old ladder retried everything 3× with a fixed
+// delay and appended each attempt's text onto the previous attempt's):
+//   - only RETRIABLE transport failures are retried (a 401/403/404 fails
+//     identically every time — retrying just costs the user 12 seconds);
+//   - at most MAX_ATTEMPTS, exponential backoff with jitter;
+//   - a retry REPLACES the attempt's content instead of concatenating;
+//   - once any text has arrived we stop retrying and show the partial reply
+//     with the reason, so a long turn is never silently re-spent.
+const MAX_ATTEMPTS = 3;
+const RETRY_BASE_DELAY_MS = 1500;
+const RETRY_MAX_DELAY_MS = 10_000;
+
+function backoffMs(attempt: number): number {
+  const base = RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
+  return Math.min(base, RETRY_MAX_DELAY_MS) + Math.floor(Math.random() * 500);
+}
+
 async function streamTo(
   set: (partial: Partial<ChatState> | ((s: ChatState) => Partial<ChatState>)) => void,
   get: () => ChatState,
@@ -1004,6 +1028,7 @@ async function streamTo(
   agentName: string | null | undefined
 ) {
   const conversationId = conv.id as number;
+  const scope = `chat.${agentKeyName(agentName)}`;
   const sessionId = await ensureSession(conv, agentName);
   const assistantMsg: ChatMessage = {
     conversationId,
@@ -1017,6 +1042,7 @@ async function streamTo(
     contextTokens: null,
     modelName: null,
     agentName: agentName || null,
+    attempts: 1,
   };
   const assistantId = (await db.messages.add(assistantMsg)) as number;
   assistantMsg.id = assistantId;
@@ -1026,9 +1052,7 @@ async function streamTo(
   // otherwise the agent's configured model. Override sends provider too so
   // the gateway honors a bare model value.
   const overrideModel = conv?.model || null;
-  // Prefer the provider stored with the override (same id can exist on
-  // several providers); fall back to catalog lookup for legacy rows.
-  const overrideProvider = conv?.modelProvider || (overrideModel ? get().providerFor(overrideModel) : "");
+  const overrideProvider = overrideModel ? get().providerFor(overrideModel) : "";
   assistantMsg.modelName = overrideModel || get().agentModel(agentName) || null;
   patchMessage(set, get, assistantId, { modelName: assistantMsg.modelName });
 
@@ -1042,33 +1066,43 @@ async function streamTo(
 
   set({ activeStreams: get().activeStreams + 1 });
 
-  let retries = 0;
-  const maxRetries = 3;
-  const retryDelay = 2000;
+  let attempts = 0;
+  let cancelled = false;
+  const current = () => get().messages.find((m) => m.id === assistantId);
+  const partialText = () => (current()?.content || "").trim();
+  const setTimer = (fn: () => void, ms: number) => {
+    const t = setTimeout(() => {
+      retryTimers.delete(assistantId);
+      if (!cancelled) fn();
+    }, ms);
+    retryTimers.set(assistantId, t);
+    return t;
+  };
 
-  // Failure reason stored on the bubble: offline (device or gateway) vs a
-  // transport error. Auto-retry on reconnect covers both, the text explains.
-  const failReason = () =>
-    !navigator.onLine || get().connectionStatus === "offline"
-      ? "You're offline — will retry when reconnected."
-      : "Couldn't reach Hermes — will retry automatically.";
-
-  const finish = async (status: "done" | "failed", errorDetail?: string | null) => {
-    const msg = get().messages.find((m) => m.id === assistantId);
+  const finish = async (status: "done" | "failed", failure?: ChatFailure) => {
+    if (cancelled) return;
+    cancelled = true;
+    const pending = retryTimers.get(assistantId);
+    if (pending) clearTimeout(pending);
+    retryTimers.delete(assistantId);
+    const msg = current();
     if (!msg) return;
-    const elapsedMs = status === "done" ? Date.now() - (msg.startedAt || Date.now()) : msg.elapsedMs;
-    patchMessage(set, get, assistantId, { status, elapsedMs, error: status === "failed" ? (errorDetail ?? null) : null });
+    const elapsedMs = status === "done" && msg.content ? Date.now() - (msg.startedAt || Date.now()) : msg.elapsedMs;
+    patchMessage(set, get, assistantId, { status, elapsedMs, toolStatus: null });
     set({ activeStreams: Math.max(0, get().activeStreams - 1) });
-    const updated = get().messages.find((m) => m.id === assistantId);
+    const updated = current();
     await db.messages.update(assistantId, {
       content: updated?.content,
       status,
-      error: status === "failed" ? (errorDetail ?? null) : null,
       startedAt: updated?.startedAt,
       elapsedMs: updated?.elapsedMs,
       tokens: updated?.tokens,
       contextTokens: updated?.contextTokens,
       modelName: updated?.modelName,
+      errorKind: failure?.kind ?? null,
+      errorText: failure?.message ?? null,
+      retriable: failure?.retriable ?? null,
+      attempts: updated?.attempts ?? attempts,
     });
     if (status === "done") {
       await db.conversations.update(conversationId, {
@@ -1081,7 +1115,7 @@ async function streamTo(
     // the feed/timeline streams real agent work as it happens. Scoped to the
     // conversation's project (P9). Chat replies are intent, not artifacts (P3),
     // so no artifact is attached — the UI renders them as unverified claims.
-    if (agentName) {
+    if (agentName && (status === "failed" || (updated?.content || "").trim())) {
       useObservabilityStore
         .getState()
         .record({
@@ -1089,7 +1123,7 @@ async function streamTo(
           projectId: conv.projectId ?? null,
           kind: "action",
           action: "replied to a message",
-          summary: (updated?.content || "").slice(0, 200),
+          summary: status === "failed" ? `failed: ${failure?.message ?? "unknown"}` : (updated?.content || "").slice(0, 200),
           status,
           streamId: `conv-${conversationId}`,
         })
@@ -1097,75 +1131,142 @@ async function streamTo(
     }
   };
 
-  const attempt = async () => {
-    try {
-      await hermesClient.streamChat(
-        context,
-        {
-          onToken(text) {
-            const msg = get().messages.find((m) => m.id === assistantId);
-            if (msg) patchMessage(set, get, assistantId, { content: (msg.content || "") + text });
-          },
-          onUsage(usage) {
-            const t = usage.total_tokens != null ? usage.total_tokens : usage.completion_tokens;
-            const patch: Partial<ChatMessage> = {};
-            if (t != null) patch.tokens = t;
-            // prompt_tokens = real input context size for this request.
-            if (usage.prompt_tokens != null) patch.contextTokens = usage.prompt_tokens;
-            if (Object.keys(patch).length) patchMessage(set, get, assistantId, patch);
-          },
-          async onDone() {
-            set({ connectionStatus: "connected" });
-            await finish("done");
-            // Auto-title on first user message of a fresh conversation.
-            const freshConv = await db.conversations.get(conversationId);
-            if (freshConv && freshConv.title === "New Chat" && userMsg) {
-              const t = userMsg.content.slice(0, 40) + (userMsg.content.length > 40 ? "…" : "");
-              await db.conversations.update(conversationId, { title: t });
-            }
-          },
-          async onError() {
-            if (retries < maxRetries) {
-              retries++;
-              set({ connectionStatus: "reconnecting" });
-              setTimeout(attempt, retryDelay * retries);
-            } else {
-              set({ connectionStatus: "offline", error: failReason() });
-              await finish("failed", failReason());
-            }
-          },
-          onSessionId(sid) {
-            if (sid) {
-              const key = agentKeyName(agentName);
-              const sessions = { ...(conv.sessions || {}) };
-              sessions[key] = sid;
-              conv.sessions = sessions;
-              db.conversations.update(conversationId, { sessions });
-            }
-          },
-        },
-        {
-          agent: agentName,
-          apiKey: get().agentKey(agentName),
-          sessionId,
-          model: overrideModel || undefined,
-          provider: overrideProvider || undefined,
-        }
-      );
-    } catch {
-      // fetch-level failure (abort/no network): same retry ladder
-      if (retries < maxRetries) {
-        retries++;
-        set({ connectionStatus: "reconnecting" });
-        setTimeout(attempt, retryDelay * retries);
-      } else {
-        set({ connectionStatus: "offline", error: failReason() });
-        await finish("failed", failReason());
-      }
+  // One failed attempt: retry the transient ones, otherwise explain and stop.
+  const onAttemptFailed = async (raw: unknown) => {
+    const err = raw instanceof StreamError ? raw : new StreamError("network", String((raw as Error)?.message || raw), { detail: JSON.stringify(describeError(raw)) });
+    const failure: ChatFailure = {
+      kind: err.kind,
+      message: err.message,
+      detail: err.detail,
+      retriable: err.retriable,
+      at: Date.now(),
+    };
+    if (err.kind === "aborted") {
+      // The user pressed Stop (or a newer send superseded this one): keep
+      // whatever text arrived and settle the bubble — never a failure state.
+      diagnostics.info(scope, "Turn stopped by the user", { chars: partialText().length });
+      await finish("done");
+      return;
     }
+    set({ lastError: failure, error: err.message });
+    diagnostics.warn(scope, `Attempt ${attempts}/${MAX_ATTEMPTS} failed: ${err.message}`, {
+      kind: err.kind,
+      status: err.status,
+      detail: err.detail,
+      receivedChars: partialText().length,
+      retriable: err.retriable,
+    });
+
+    if (err.retriable && !partialText() && attempts < MAX_ATTEMPTS) {
+      const delay = backoffMs(attempts);
+      set({ connectionStatus: "reconnecting", error: `Reconnecting… (attempt ${attempts + 1}/${MAX_ATTEMPTS})` });
+      diagnostics.debug(scope, `Retrying in ${delay}ms`, { attempt: attempts + 1, of: MAX_ATTEMPTS });
+      setTimer(() => void attempt(), delay);
+      return;
+    }
+
+    // Terminal for this turn.
+    if (err.kind === "network" || err.kind === "timeout" || err.kind === "stall" || err.kind === "server") {
+      set({ connectionStatus: "reconnecting" });
+    }
+    if (err.retriable && !partialText()) {
+      // Re-send automatically once the gateway proves it is back (see
+      // flushPendingRetries) — the user should rarely have to tap Retry.
+      pendingRetries.add(assistantId);
+    }
+    await finish("failed", failure);
   };
 
-  attempt();
+  const attempt = async () => {
+    attempts++;
+    patchMessage(set, get, assistantId, { status: "streaming", attempts, toolStatus: null });
+    await hermesClient.streamChat(
+      context,
+      {
+        onToken(text) {
+          const msg = current();
+          if (msg) patchMessage(set, get, assistantId, { content: (msg.content || "") + text, toolStatus: null });
+        },
+        onToolProgress(progress) {
+          const line =
+            progress.status === "running"
+              ? `${progress.emoji || "🔧"} ${progress.label || progress.tool || "working"}`
+              : null;
+          if (line) diagnostics.debug(scope, `Tool running: ${line}`);
+          patchMessage(set, get, assistantId, { toolStatus: line });
+        },
+        onUsage(usage) {
+          const t = usage.total_tokens != null ? usage.total_tokens : usage.completion_tokens;
+          const patch: Partial<ChatMessage> = {};
+          if (t != null) patch.tokens = t;
+          // prompt_tokens = real input context size for this request.
+          if (usage.prompt_tokens != null) patch.contextTokens = usage.prompt_tokens;
+          if (Object.keys(patch).length) patchMessage(set, get, assistantId, patch);
+        },
+        async onDone() {
+          set({ connectionStatus: "connected", lastError: null, error: null });
+          await finish("done");
+          // Auto-title on first user message of a fresh conversation.
+          const freshConv = await db.conversations.get(conversationId);
+          if (freshConv && freshConv.title === "New Chat" && userMsg) {
+            const t = userMsg.content.slice(0, 40) + (userMsg.content.length > 40 ? "…" : "");
+            await db.conversations.update(conversationId, { title: t });
+          }
+        },
+        onError(err) {
+          return onAttemptFailed(err);
+        },
+        onSessionId(sid) {
+          if (sid) {
+            const key = agentKeyName(agentName);
+            const sessions = { ...(conv.sessions || {}) };
+            sessions[key] = sid;
+            conv.sessions = sessions;
+            db.conversations.update(conversationId, { sessions });
+          }
+        },
+      },
+      {
+        agent: agentName,
+        apiKey: get().agentKey(agentName),
+        sessionId,
+        model: overrideModel || undefined,
+        provider: overrideProvider || undefined,
+        label: agentKeyName(agentName),
+      }
+    );
+  };
+
+  diagnostics.info(scope, "Turn started", {
+    conversationId,
+    sessionId,
+    model: assistantMsg.modelName || "(profile default)",
+    contextMessages: context.length,
+  });
+  await attempt();
+}
+
+// Timers for scheduled retries, keyed by assistant message id, so Stop and
+// teardown can cancel pending attempts.
+const retryTimers = new Map<number, ReturnType<typeof setTimeout>>();
+
+// Turns that failed for a retriable reason with nothing received yet: re-sent
+// automatically the moment the gateway proves it is reachable again.
+const pendingRetries = new Set<number>();
+
+async function flushPendingRetries(
+  set: (partial: Partial<ChatState> | ((s: ChatState) => Partial<ChatState>)) => void,
+  get: () => ChatState
+): Promise<void> {
+  if (pendingRetries.size === 0) return;
+  if (get().isStreaming()) return; // don't stack turns on top of a live stream
+  const ids = [...pendingRetries];
+  pendingRetries.clear();
+  diagnostics.info("chat.retry", `Reconnected — re-sending ${ids.length} failed turn(s)`, { ids });
+  for (const id of ids) {
+    await get().retryMessage(id);
+  }
+  void set;
 }
 
 function patchMessage(
@@ -1202,7 +1303,10 @@ async function applyServerConfig(
 ) {
   try {
     const r = await fetch("/talaria-config");
-    if (!r.ok) return;
+    if (!r.ok) {
+      diagnostics.warn("chat.config", `/talaria-config returned HTTP ${r.status} — per-profile API keys not provisioned (agent DMs will 401)`);
+      return;
+    }
     const cfg = await r.json();
     if (cfg.agents) {
       for (const [name, key] of Object.entries(cfg.agents) as Array<[string, string]>) {
@@ -1233,21 +1337,19 @@ async function applyServerConfig(
       }
       if (Object.keys(map).length) set({ modelsMap: map });
     }
-    // Fallback models from every profile's `fallback_providers` — real
-    // configured models, offered in the dropdown ungated.
-    if (Array.isArray(cfg.fallbacks)) {
-      const fb: Array<ModelInfo> = [];
-      for (const info of cfg.fallbacks as Array<{ model?: string; provider?: string }>) {
-        if (info?.model) fb.push({ model: info.model, provider: info.provider || "", contextLength: null });
-      }
-      set({ fallbackModels: fb });
-    }
     // Which model-providers have credentials on this host (from .env).
     if (Array.isArray(cfg.modelProviders)) {
       set({ availableModelProviders: cfg.modelProviders });
     }
-  } catch {
+  } catch (err) {
     // Not served by a Talaria config endpoint — e.g. a remote/public host.
+    // This is the #1 cause of "agent chats 401 but the default profile works":
+    // without per-profile keys every /p/<agent>/ request is rejected.
+    diagnostics.warn(
+      "chat.config",
+      "Could not read /talaria-config — per-profile API keys are NOT provisioned here (agent DMs will fail with 401 unless keys were set in Settings)",
+      describeError(err)
+    );
   }
 }
 
@@ -1266,7 +1368,8 @@ async function discoverServerConversations(get: () => ChatState) {
     let list: Awaited<ReturnType<typeof hermesClient.listSessions>> = [];
     try {
       list = await hermesClient.listSessions(profile, { apiKey: agentKey(profile) });
-    } catch {
+    } catch (err) {
+      diagnostics.warn("chat.discover", `Could not list sessions for ${profile ?? "default"}`, describeError(err));
       list = [];
     }
     for (const s of list || []) {

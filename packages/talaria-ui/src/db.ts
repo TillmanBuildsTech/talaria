@@ -45,9 +45,17 @@ export type ChatMessage = {
   tokens?: number | null;
   contextTokens?: number | null;
   modelName?: string | null;
-  // Human-readable failure reason for status === "failed" (shown in the
-  // bubble; cleared on retry/reconnect). Non-indexed — no migration.
-  error?: string | null;
+  // ── failure / progress detail (diagnostics) ───────────────────────────────
+  // Why a row failed, straight from the transport (StreamFailureKind) plus the
+  // gateway's own message. Optional and non-indexed, so no Dexie version bump.
+  errorKind?: string | null;
+  errorText?: string | null;
+  // Whether re-sending this turn could plausibly work (false for auth/4xx).
+  retriable?: boolean | null;
+  // How many transport attempts have been made for this reply.
+  attempts?: number | null;
+  // Live agent tool line (`hermes.tool.progress`) while the turn streams.
+  toolStatus?: string | null;
 };
 
 export type ConversationKind = "default" | "dm" | "group";
@@ -61,10 +69,6 @@ export type Conversation = {
   agentIds: Array<string>;
   messageCount?: number;
   model?: string | null;
-  // Provider paired with the `model` override (same model id can exist on
-  // several providers, e.g. deepseek-v4-flash on deepseek vs opencode-go).
-  // Non-indexed like `model`, so no Dexie migration is needed.
-  modelProvider?: string | null;
   sessions?: Record<string, string>;
   // Project scope (P9): the workspace this conversation belongs to. null (or
   // absent) means the global/unassigned scope. Scoped conversations are

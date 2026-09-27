@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { ChatInput } from "./components/chat-input";
 import { ChatMessage } from "./components/chat-message";
 import { CodeEditor } from "./components/code-editor";
-import { ConnectionBanner, ConnectionPill } from "./components/connection-banner";
+import { ConnectionBanner, ConnectionDot } from "./components/connection-banner";
+import { DebugPanel } from "./components/debug-panel";
 import { Deployments } from "./components/deployments";
 import { NavRail, type NavModuleId } from "./components/nav-rail";
 import { DocsEditor } from "./components/docs-editor";
@@ -57,13 +58,8 @@ export function App() {
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [showModelMenu, setShowModelMenu] = useState(false);
-  const [modelFilter, setModelFilter] = useState("");
-
-  function toggleModelMenu() {
-    // Clear the previous search each time the menu opens.
-    if (!showModelMenu) setModelFilter("");
-    setShowModelMenu((v) => !v);
-  }
+  const [customModel, setCustomModel] = useState("");
+  const [showDebug, setShowDebug] = useState(false);
 
   const chatContainer = useRef<HTMLDivElement>(null);
   const scrollAnchor = useRef<HTMLDivElement>(null);
@@ -75,7 +71,6 @@ export function App() {
   const activeContextTokens = store.activeContextTokens();
   const activeContextWindow = store.activeContextWindow();
   const activeModelName = store.activeModelName();
-  const activeModelProvider = store.activeModelProvider();
   const configuredModels = store.configuredModels();
   const activeConvTitle = store.activeConvTitle();
 
@@ -91,20 +86,10 @@ export function App() {
   const modelDotClass = { red: "bg-red-400", amber: "bg-amber-400", green: "bg-emerald-400" }[level];
   const contextWidth = `${Math.min(100, (activeContextTokens / (activeContextWindow || 1)) * 100)}%`;
 
-  function selectModel(modelName: string | null, provider?: string | null) {
-    store.setConversationModel(modelName, provider);
+  function selectModel(modelName: string | null) {
+    store.setConversationModel(modelName);
     setShowModelMenu(false);
   }
-
-  // Model-menu search: substring match over model id + provider. "Profile
-  // default" stays pinned when the query is empty or matches it.
-  const modelQuery = modelFilter.trim().toLowerCase();
-  const showProfileDefault = !modelQuery || "profile default".includes(modelQuery);
-  const filteredModels = modelQuery
-    ? configuredModels.filter((m) =>
-        `${m.model} ${m.provider || ""}`.toLowerCase().includes(modelQuery),
-      )
-    : configuredModels;
 
   function startTitleEdit() {
     if (!activeConversationId) return;
@@ -179,11 +164,7 @@ export function App() {
       <ConnectionBanner />
 
       {/* Top bar */}
-      {/* Top bar — pt accounts for the iPhone status bar in standalone PWA
-          (viewport-fit=cover + black-translucent puts the webview under it;
-          env() is 0 in a browser tab, so this is a no-op there). Without it
-          the top buttons sit under the status bar and can't be tapped. */}
-      <header className="flex items-center gap-2 px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] border-b border-slate-800 shrink-0">
+      <header className="flex items-center gap-2 px-4 py-3 border-b border-slate-800 shrink-0">
         {/* Project scope picker */}
         <ProjectPicker />
         <button
@@ -241,13 +222,23 @@ export function App() {
           )}
         </div>
 
-        {/* Connection presence (always visible) + model picker (per-conversation) */}
-        <ConnectionPill />
+        {/* Model picker + context (only once a conversation is open) */}
+        <ConnectionDot />
+        <button
+          type="button"
+          onClick={() => setShowDebug((v) => !v)}
+          className={`px-2 py-1.5 rounded-lg border text-[11px] font-mono transition-colors shrink-0 ${showDebug ? "border-sky-500 text-sky-300 bg-sky-500/10" : "border-slate-700 text-slate-400 hover:bg-slate-800"}`}
+          title="Toggle the chat diagnostics console (why did that fail?)"
+          aria-label="Toggle diagnostics panel"
+          aria-pressed={showDebug}
+        >
+          {"{…}"}
+        </button>
         {activeConversationId && (
           <div className="relative shrink-0">
             <button
               type="button"
-              onClick={toggleModelMenu}
+              onClick={() => setShowModelMenu((v) => !v)}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-700 hover:bg-slate-800 text-xs transition-colors"
               title={`Model for this conversation (${fmtTokens(activeContextWindow)} context)`}
             >
@@ -266,54 +257,29 @@ export function App() {
                   aria-label="Close model menu"
                   onClick={() => setShowModelMenu(false)}
                 />
-                <div className="absolute right-0 top-full mt-2 w-80 max-w-[85vw] max-h-[70dvh] overflow-y-auto z-40 bg-slate-800 rounded-xl border border-slate-700 shadow-xl">
+                <div className="absolute right-0 top-full mt-2 w-80 z-40 bg-slate-800 rounded-xl border border-slate-700 shadow-xl flex flex-col max-h-[75vh] overflow-hidden">
                   <div className="px-3 py-2 text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-700/60">
                     Model for this conversation
                   </div>
-                  {/* Search filter (model id + provider). Enter picks the
-                      first visible option, Escape closes. */}
-                  <div className="px-3 py-2 border-b border-slate-700/60 sticky top-0 bg-slate-800">
-                    <input
-                      autoFocus
-                      value={modelFilter}
-                      onChange={(e) => setModelFilter(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Escape") {
-                          e.preventDefault();
-                          setShowModelMenu(false);
-                        } else if (e.key === "Enter") {
-                          e.preventDefault();
-                          if (showProfileDefault) selectModel(null);
-                          else if (filteredModels[0]) selectModel(filteredModels[0].model, filteredModels[0].provider);
-                        }
-                      }}
-                      placeholder="Search models…"
-                      aria-label="Search models"
-                      className="w-full bg-slate-900 text-xs rounded-lg px-2.5 py-1.5 outline-none ring-1 ring-slate-700 focus:ring-blue-500 text-slate-100 placeholder-slate-500"
-                    />
-                  </div>
-                  {showProfileDefault && (
+                  <div className="overflow-y-auto min-h-0">
+                  <button
+                    type="button"
+                    onClick={() => selectModel(null)}
+                    className="w-full text-left px-3 py-2 text-xs hover:bg-slate-700/60 transition-colors flex items-center justify-between gap-2"
+                  >
+                    <span className="text-slate-300">Profile default</span>
+                    {!activeModelName && <span className="text-emerald-400">✓</span>}
+                  </button>
+                  {configuredModels.map((m) => (
                     <button
                       type="button"
-                      onClick={() => selectModel(null)}
-                      className="w-full text-left px-3 py-2 text-xs hover:bg-slate-700/60 transition-colors flex items-center justify-between gap-2"
-                    >
-                      <span className="text-slate-300">Profile default</span>
-                      {!activeModelName && <span className="text-emerald-400">✓</span>}
-                    </button>
-                  )}
-                  {filteredModels.map((m) => (
-                    <button
-                      type="button"
-                      key={`${m.provider}|||${m.model}`}
-                      onClick={() => selectModel(m.model, m.provider)}
+                      key={m.model}
+                      onClick={() => selectModel(m.model)}
                       className="w-full text-left px-3 py-2 text-xs hover:bg-slate-700/60 transition-colors cursor-pointer flex flex-col gap-0.5"
                     >
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-slate-200 font-mono truncate">{m.model}</span>
-                        {activeModelName === m.model && (activeModelProvider || "") === (m.provider || "") && (
-                          <span className="text-emerald-400 shrink-0">✓</span>
-                        )}
+                        {activeModelName === m.model && <span className="text-emerald-400 shrink-0">✓</span>}
                       </div>
                       <div className="flex items-center gap-2 text-[10px] text-slate-500">
                         {m.provider && <span className="truncate">{m.provider}</span>}
@@ -322,9 +288,33 @@ export function App() {
                     </button>
                   ))}
                   {configuredModels.length === 0 && <div className="px-3 py-2 text-xs text-slate-500">No models detected.</div>}
-                  {configuredModels.length > 0 && !showProfileDefault && filteredModels.length === 0 && (
-                    <div className="px-3 py-2 text-xs text-slate-500">No models match “{modelFilter.trim()}”.</div>
-                  )}
+                  </div>
+                  <form
+                    className="flex items-center gap-2 px-3 py-2 border-t border-slate-700/60"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (customModel.trim()) {
+                        void store.addCustomModel(customModel);
+                        setCustomModel("");
+                        setShowModelMenu(false);
+                      }
+                    }}
+                  >
+                    <input
+                      value={customModel}
+                      onChange={(e) => setCustomModel(e.target.value)}
+                      placeholder="Custom model (vendor/model)…"
+                      aria-label="Custom model id"
+                      className="flex-1 min-w-0 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-xs font-mono text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-slate-500"
+                    />
+                    <button
+                      type="submit"
+                      disabled={!customModel.trim()}
+                      className="shrink-0 px-2 py-1.5 text-xs rounded-lg bg-slate-700 hover:bg-slate-600 disabled:opacity-40 transition-colors"
+                    >
+                      Use
+                    </button>
+                  </form>
                 </div>
               </>
             )}
@@ -346,7 +336,7 @@ export function App() {
       )}
 
       {/* Body: left nav rail + active module */}
-      <div className="flex flex-1 min-h-0 min-w-0">
+      <div className="flex flex-1 min-h-0">
         <NavRail active={module} onSelect={setModule} />
         {module === "observability" ? (
           <div className="flex-1 min-h-0">
@@ -365,7 +355,7 @@ export function App() {
             <DocsEditor />
           </div>
         ) : module === "command-center" ? (
-          <div className="flex-1 min-h-0 min-w-0">
+          <div className="flex-1 min-h-0">
             <KanbanBoard onOpenSettings={() => setModule("settings")} />
           </div>
         ) : module === "editor" ? (
@@ -403,6 +393,7 @@ export function App() {
 
             {/* Input */}
             <ChatInput onSend={handleSend} onStop={() => store.stopStreaming()} />
+            {showDebug && <DebugPanel onClose={() => setShowDebug(false)} />}
           </div>
         ) : (
           /* Coming-soon modules (docs, editor) render a placeholder */
