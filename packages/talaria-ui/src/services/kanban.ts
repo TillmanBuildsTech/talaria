@@ -103,6 +103,15 @@ export type KanbanTaskDetail = {
   attachments: Array<KanbanAttachment>;
 };
 
+// Input for creating a task from the app (CEO mode): a goal title plus the
+// acceptance-criteria body, optionally routed to a specific profile. The board
+// is chosen by the caller (project scope → its slug; otherwise the default).
+export type CreateTaskInput = {
+  title: string;
+  body?: string;
+  assignee?: string;
+};
+
 export type AutonomyMode = "swarm" | "supervised" | "manual";
 
 // Board slug for the active project scope: the project's slug (which matches
@@ -192,6 +201,20 @@ class KanbanClient {
       headers: { ...authHeaders() },
     });
     if (!r.ok) await throwForStatus(r, "kanban unblock");
+  }
+
+  // POST /kanban-api/tasks → create a task on the active board. The bridge
+  // shells `hermes kanban create`, so a CEO-mode goal becomes a REAL card the
+  // dispatcher can pick up — never a local-only shadow task.
+  async createTask(input: CreateTaskInput, board?: string): Promise<KanbanCard> {
+    const r = await fetch(boardUrl("/kanban-api/tasks", board), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json", ...authHeaders() },
+      body: JSON.stringify(input),
+    });
+    if (!r.ok) await throwForStatus(r, "kanban create");
+    const data = (await r.json()) as { task?: KanbanCard };
+    return (data.task ?? (data as unknown as KanbanCard)) as KanbanCard;
   }
 }
 

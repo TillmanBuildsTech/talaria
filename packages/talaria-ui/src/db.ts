@@ -254,7 +254,24 @@ export type ActivityEvent = {
   streamId?: string;
 };
 
+// A Goal is a CEO-mode objective: a stated outcome plus its acceptance
+// criteria, which can be turned into a REAL kanban task on the active board.
+// Persisted locally so the goal list survives reloads even when the board is
+// unreachable; `kanbanTaskId` links back to the Hermes task once created.
+export type Goal = {
+  id?: number;
+  title: string;
+  acceptanceCriteria: string;
+  // Board slug the task is created on ("" = the default/global board), matching
+  // the project-scoped board resolution used everywhere else (P9).
+  board: string;
+  // The real Hermes kanban task this goal produced (null until created).
+  kanbanTaskId?: string | null;
+  createdAt: number;
+};
+
 type HermesChatDB = Dexie & {
+  goals: EntityTable<Goal, "id">;
   agents: EntityTable<Agent, "name">;
   messages: EntityTable<ChatMessage, "id">;
   conversations: EntityTable<Conversation, "id">;
@@ -310,6 +327,11 @@ db.version(6).stores({
 // chronological feed order).
 db.version(7).stores({
   activity: "++id, agent, projectId, taskId, kind, createdAt, streamId",
+});
+// v8: add the goals table (CEO mode) — locally-persisted objectives, each
+// linked to the real kanban task it created. Unchanged rows migrate as-is.
+db.version(8).stores({
+  goals: "++id, board, createdAt",
 });
 
 // Default agents seeded from the Hermes profiles on this host. Users can add /
