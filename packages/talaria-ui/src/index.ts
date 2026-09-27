@@ -9,6 +9,7 @@ export { DebugPanel } from "./components/debug-panel";
 export { ConversationBadge } from "./components/conversation-badge";
 export { DiffViewer } from "./components/diff-viewer";
 export { GitHubConnect } from "./components/github-connect";
+export { GoalDefinition } from "./components/goal-definition";
 export { NavRail } from "./components/nav-rail";
 export type { NavEntry, NavModuleId } from "./components/nav-rail";
 export {
@@ -48,6 +49,7 @@ export type {
   GitHubConnection,
   GitHubConnectionStatus,
   GitHubConnectionType,
+  Goal,
   MessageStatus,
   Project,
   Repo,
@@ -121,6 +123,8 @@ export type { ReposState } from "./stores/repos";
 export { useReposStore } from "./stores/repos";
 export type { ObservabilityState } from "./stores/observability";
 export { useObservabilityStore, isArtifactBacked, isReviewable } from "./stores/observability";
+export type { CreateGoalInput, GoalsState } from "./stores/goals";
+export { useGoalsStore } from "./stores/goals";
 
 export { DocsEditor } from "./components/docs-editor";
 export {

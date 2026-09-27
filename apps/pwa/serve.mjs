@@ -89,6 +89,7 @@ async function serveConfig(res) {
 //   GET  /kanban-api/board?board=<slug>         → full board grouped by column
 //   GET  /kanban-api/tasks/:id?board=<slug>     → task detail (deps, comments,
 //                                                 runs, attachments)
+//   POST /kanban-api/tasks                      → create a task (CEO-mode goal)
 //   POST /kanban-api/tasks/:id/archive          → archive a task (zombie-kill)
 //   POST /kanban-api/tasks/:id/unblock          → unblock a stale-blocked task
 //
@@ -236,6 +237,25 @@ function runKanbanCli(board, args) {
   }
 }
 
+// `hermes kanban create --json` prints the created row; some builds only print
+// the human line ("Created t_ab12cd34  (todo, assignee=developer)"). Accept
+// both shapes so the bridge keeps working across CLI versions.
+function parseCreatedTask(out) {
+  const text = String(out || '')
+  const start = text.indexOf('{')
+  if (start !== -1) {
+    try {
+      const parsed = JSON.parse(text.slice(start))
+      const task = parsed?.task ?? parsed
+      if (task && typeof task.id === 'string' && task.id) return task
+    } catch {
+      /* fall through to the human-output regex */
+    }
+  }
+  const m = text.match(/\bt_[0-9a-z]{6,}\b/i)
+  return m ? { id: m[0], title: null, status: 'todo' } : null
+}
+
 function sendJson(res, status, obj) {
   res.writeHead(status, {
     'Content-Type': 'application/json',
@@ -287,6 +307,32 @@ async function serveKanban(req, res, url) {
       sendJson(res, 400, { error: err.message })
     }
     return
+  }
+
+  // POST /kanban-api/tasks → create a card from a CEO-mode goal. Shells
+  // `hermes kanban create` so the goal lands on the SAME board the dispatcher
+  // reads — never a local-only shadow task.
+  if (method === 'POST' && pathname === '/kanban-api/tasks') {
+    let payload
+    try {
+      payload = await readJsonBody(req)
+    } catch (err) {
+      return sendJson(res, 400, { error: `invalid JSON body: ${err.message}` })
+    }
+    const title = String(payload?.title || '').trim()
+    if (!title) return sendJson(res, 400, { error: 'title is required' })
+    const args = ['create', title, '--json']
+    const body = String(payload?.body || '').trim()
+    if (body) args.push('--body', body)
+    const assignee = String(payload?.assignee || '').trim()
+    if (assignee) args.push('--assignee', assignee)
+    const result = runKanbanCli(board, args)
+    if (!result.ok) return sendJson(res, 502, result)
+    const task = parseCreatedTask(result.out)
+    if (!task) {
+      return sendJson(res, 502, { error: `could not read the created task id from: ${result.out}` })
+    }
+    return sendJson(res, 200, { ok: true, task })
   }
 
   // GET /kanban-api/tasks/:id  |  POST /kanban-api/tasks/:id/{archive,unblock}

@@ -4,6 +4,7 @@ import type { Agent } from "../db";
 import { useChatStore } from "../stores/chat";
 import { AgentAvatar } from "./agent-avatar";
 import { GitHubConnect } from "./github-connect";
+import { GoalDefinition } from "./goal-definition";
 
 type SettingsPageProps = {
   onClose: () => void;
@@ -170,6 +171,9 @@ export function SettingsPage({ onClose }: SettingsPageProps) {
 
         {/* GitHub connection (M2 auth — device flow + PAT fallback) */}
         <GitHubConnect />
+
+        {/* Goals (CEO mode) — define the outcome; it becomes a real board task */}
+        <GoalDefinition />
 
         {/* Agents (profile contacts) */}
         <div className="pt-1">
