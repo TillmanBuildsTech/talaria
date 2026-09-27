@@ -1,12 +1,35 @@
 import type { CSSProperties } from "react";
 import { useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import type { Agent, Conversation } from "../db";
+import type { Agent, AgentRole, Conversation } from "../db";
+import { ROLE_LABELS, ROLE_ORDER } from "../db";
 import { useChatStore } from "../stores/chat";
 import { AgentAvatar } from "./agent-avatar";
 import { ConversationBadge } from "./conversation-badge";
 
 type Picking = null | "dm" | "group";
+
+// Org-chart groups (CEO mode): the sidebar renders agents as roles, not just
+// contacts. Fixed order — CEO first, then specialists, then anything without a
+// declared role in a trailing "General" group.
+function groupAgentsByRole(agents: Array<Agent>): Array<{ label: string; agents: Array<Agent> }> {
+  const groups: Array<{ label: string; agents: Array<Agent> }> = [];
+  for (const role of ROLE_ORDER) {
+    const list = agents.filter((a) => a.role === role);
+    if (list.length) groups.push({ label: ROLE_LABELS[role], agents: list });
+  }
+  const general = agents.filter((a) => !a.role);
+  if (general.length) groups.push({ label: "General", agents: general });
+  return groups;
+}
+
+function RoleChip({ role }: { role: AgentRole }) {
+  return (
+    <span className="text-[9px] font-semibold uppercase tracking-wide px-1 py-0.5 rounded bg-slate-800 text-slate-400 shrink-0">
+      {ROLE_LABELS[role]}
+    </span>
+  );
+}
 
 type SidebarProps = {
   onClose: () => void;
@@ -143,9 +166,12 @@ export function Sidebar({ onClose, style }: SidebarProps) {
                     className={`w-5 h-5 shrink-0 rounded-full border-2 ${selected.includes(agent.name) ? "border-blue-500" : "border-slate-600"}`}
                   />
                 )}
-                <AgentAvatar name={agent.name} display={agent.displayName} color={agent.color} size={10} />
+                <AgentAvatar name={agent.name} display={agent.displayName} color={agent.color} size={10} role={agent.role} />
                 <span className="flex-1 min-w-0">
-                  <span className="block text-sm font-medium text-slate-200 truncate">{agent.displayName}</span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="text-sm font-medium text-slate-200 truncate">{agent.displayName}</span>
+                    {agent.role && <RoleChip role={agent.role} />}
+                  </span>
                   <span className="block text-xs text-slate-500 truncate">{agent.description || agent.name}</span>
                 </span>
               </button>
@@ -176,19 +202,27 @@ export function Sidebar({ onClose, style }: SidebarProps) {
                   New DM
                 </button>
               </div>
-              <div className="px-2 pb-2 flex flex-wrap gap-1.5">
-                {agents.map((agent) => (
-                  <button
-                    type="button"
-                    key={agent.name}
-                    onClick={() => direct(agent.name)}
-                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-xs transition-colors"
-                    style={{ backgroundColor: `${agent.color}22`, color: agent.color }}
-                    title={`Message ${agent.displayName}`}
-                  >
-                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: agent.color }} />
-                    {agent.displayName}
-                  </button>
+              <div className="px-2 pb-2">
+                {groupAgentsByRole(agents).map((group) => (
+                  <div key={group.label} className="mb-2">
+                    <p className="px-1 pt-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">{group.label}</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {group.agents.map((agent) => (
+                        <button
+                          type="button"
+                          key={agent.name}
+                          onClick={() => direct(agent.name)}
+                          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-xs transition-colors"
+                          style={{ backgroundColor: `${agent.color}22`, color: agent.color }}
+                          title={`Message ${agent.displayName}${agent.role ? ` (${ROLE_LABELS[agent.role]})` : ""}`}
+                        >
+                          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: agent.color }} />
+                          {agent.displayName}
+                          {agent.role && <RoleChip role={agent.role} />}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 ))}
               </div>
               <button
