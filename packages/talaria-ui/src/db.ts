@@ -18,6 +18,51 @@
 //                   task. The live feed + timelines replay from here (P5).
 import Dexie, { type EntityTable } from "dexie";
 
+// Org-chart role (CEO mode): which job the agent's profile does. `undefined`
+// for user-added agents with no declared role — they render in the general
+// group without a chip.
+export type AgentRole = "ceo" | "coder" | "qa" | "research" | "ops";
+
+// Rendering order for the sidebar org chart: CEO group first, then the rest.
+export const ROLE_ORDER: ReadonlyArray<AgentRole> = ["ceo", "coder", "qa", "research", "ops"];
+
+export const ROLE_LABELS: Record<AgentRole, string> = {
+  ceo: "CEO",
+  coder: "Coder",
+  qa: "QA",
+  research: "Research",
+  ops: "Ops",
+};
+
+// Deterministic role for a known Hermes profile name; undefined for anything
+// unrecognized. Used to backfill roles for existing agents and to default new
+// ones — the user can override by declaring the role explicitly.
+export function inferRole(name: string): AgentRole | undefined {
+  switch ((name || "").toLowerCase()) {
+    case "developer":
+    case "coder":
+    case "engineer":
+      return "coder";
+    case "researcher":
+    case "research":
+      return "research";
+    case "operations":
+    case "ops":
+    case "operator":
+      return "ops";
+    case "quality-assurance":
+    case "qa":
+    case "tester":
+      return "qa";
+    case "product-owner":
+    case "po":
+    case "ceo":
+      return "ceo";
+    default:
+      return undefined;
+  }
+}
+
 export type Agent = {
   name: string;
   displayName: string;
@@ -25,6 +70,7 @@ export type Agent = {
   description?: string;
   apiKey?: string;
   sort: number;
+  role?: AgentRole;
 };
 
 export type MessageStatus = "sent" | "streaming" | "done" | "failed";
@@ -333,15 +379,32 @@ db.version(7).stores({
 db.version(8).stores({
   goals: "++id, board, createdAt",
 });
+// v9: add the org-chart role to agents (CEO mode) — a grouping + chip label.
+// The v2 schema (the version that first introduced the agents table) is
+// re-declared with the new `role` index; existing rows are backfilled from
+// their profile name via inferRole() so boards with pre-existing agents get
+// roles without user intervention.
+db.version(9)
+  .stores({
+    agents: "name, displayName, color, sort, role",
+  })
+  .upgrade(async (tx) => {
+    const rows = (await tx.table("agents").toArray()) as Array<Agent>;
+    for (const a of rows) {
+      if (!a.role) {
+        await tx.table("agents").update(a.name, { role: inferRole(a.name) });
+      }
+    }
+  });
 
 // Default agents seeded from the Hermes profiles on this host. Users can add /
 // edit / remove contacts in Settings; the list is also editable for remote hosts.
 const DEFAULT_AGENTS: Array<Agent> = [
-  { name: "developer", displayName: "Developer", description: "Coding & infrastructure agent", color: "#38bdf8", sort: 0 },
-  { name: "researcher", displayName: "Researcher", description: "Research & lead-gen agent", color: "#a78bfa", sort: 1 },
-  { name: "operations", displayName: "Operations", description: "Ops & pipeline agent", color: "#34d399", sort: 2 },
-  { name: "product-owner", displayName: "Product Owner", description: "Product & roadmap agent", color: "#fbbf24", sort: 3 },
-  { name: "quality-assurance", displayName: "QA", description: "Testing & review agent", color: "#fb7185", sort: 4 },
+  { name: "developer", displayName: "Developer", description: "Coding & infrastructure agent", color: "#38bdf8", sort: 0, role: "coder" },
+  { name: "researcher", displayName: "Researcher", description: "Research & lead-gen agent", color: "#a78bfa", sort: 1, role: "research" },
+  { name: "operations", displayName: "Operations", description: "Ops & pipeline agent", color: "#34d399", sort: 2, role: "ops" },
+  { name: "product-owner", displayName: "Product Owner", description: "Product & roadmap agent", color: "#fbbf24", sort: 3, role: "ceo" },
+  { name: "quality-assurance", displayName: "QA", description: "Testing & review agent", color: "#fb7185", sort: 4, role: "qa" },
   { name: "comedian", displayName: "Comedian", description: "Jokes & banter agent", color: "#f472b6", sort: 5 },
 ];
 

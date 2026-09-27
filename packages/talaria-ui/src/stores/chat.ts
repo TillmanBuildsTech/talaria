@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import db, { type Agent, type ChatMessage, type Conversation } from "../db";
+import db, { type Agent, type AgentRole, type ChatMessage, type Conversation, inferRole } from "../db";
 import { KNOWN_MODELS, type ModelInfo, knownWindowFor } from "../models";
 import { describeError, diagnostics } from "../services/diagnostics";
 import { StreamError, type StreamFailureKind, createConnectionMonitor, hermesClient } from "../services/hermes";
@@ -151,7 +151,7 @@ export type ChatState = {
   init: () => Promise<void>;
   destroy: () => void;
   loadAgents: () => Promise<void>;
-  addAgent: (agent: { name: string; displayName?: string; color?: string; description?: string; apiKey?: string }) => Promise<void>;
+  addAgent: (agent: { name: string; displayName?: string; color?: string; description?: string; apiKey?: string; role?: AgentRole }) => Promise<void>;
   removeAgent: (name: string) => Promise<void>;
   loadConversations: () => Promise<void>;
   reloadForScope: () => Promise<void>;
@@ -365,7 +365,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ agents });
   },
 
-  async addAgent({ name, displayName, color, description, apiKey }) {
+  async addAgent({ name, displayName, color, description, apiKey, role }) {
     if (!name) return;
     // Upsert: preserve color/sort when editing an existing agent.
     const existing = await db.agents.get(name);
@@ -376,6 +376,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       color: color || existing?.color || pickColor(sort),
       description: description !== undefined ? description : existing?.description || "",
       apiKey: apiKey !== undefined ? apiKey : existing?.apiKey || "",
+      // Role defaults from the profile name (CEO mode org chart); an explicit
+      // role on an existing agent wins over re-inference on later edits.
+      role: role || existing?.role || inferRole(name),
       sort,
     });
     await get().loadAgents();
